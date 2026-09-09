@@ -1,0 +1,303 @@
+$background: #090c10;
+$surface: #10151b;
+$surface-raised: #151c24;
+$border: #29323d;
+$text: #e6edf3;
+$muted: #84909d;
+$accent: #d7ff4f;
+$danger: #ff657a;
+
+Screen {
+    background: $background;
+    color: $text;
+}
+
+#app-header {
+    dock: top;
+    width: 100%;
+    height: 3;
+    padding: 1 2 0 2;
+    background: $surface;
+    border-bottom: solid $border;
+}
+
+#brand {
+    width: auto;
+}
+
+#connection-status {
+    width: 1fr;
+    text-align: center;
+    color: #73e6a1;
+}
+
+#project-path {
+    width: 35%;
+    text-align: right;
+    color: $muted;
+    text-overflow: ellipsis;
+}
+
+#conversation-shell {
+    width: 100%;
+    height: 1fr;
+    padding: 1 3;
+}
+
+#conversation-view {
+    width: 100%;
+    height: 1fr;
+    scrollbar-color: $border;
+    scrollbar-color-hover: $accent;
+}
+
+.message {
+    width: 100%;
+    height: auto;
+    margin: 0 0 1 0;
+    padding: 1 2;
+    background: $surface;
+    border-left: tall $border;
+}
+
+.message.user {
+    background: $surface-raised;
+    border-left: tall $accent;
+}
+
+.message.error {
+    color: $danger;
+    border-left: tall $danger;
+}
+
+.message-label {
+    width: 100%;
+    height: 1;
+    margin-bottom: 1;
+    color: $accent;
+    text-style: bold;
+}
+
+.message.error .message-label {
+    color: $danger;
+}
+
+.message-content {
+    width: 100%;
+    height: auto;
+    background: transparent;
+}
+
+#welcome-panel {
+    width: 80%;
+    max-width: 100;
+    height: auto;
+    margin: 3 0;
+    padding: 2 3;
+    background: $surface;
+    border: round $border;
+}
+
+#welcome-title {
+    width: 100%;
+    text-align: center;
+    text-style: bold;
+    color: $accent;
+    padding-bottom: 1;
+}
+
+#welcome-subtitle {
+    width: 100%;
+    text-align: center;
+    color: $muted;
+    padding-bottom: 2;
+}
+
+#welcome-columns {
+    width: 100%;
+    height: auto;
+}
+
+.welcome-column {
+    width: 1fr;
+    height: auto;
+    padding: 1 2;
+    line-pad: 1;
+}
+
+.welcome-column.muted {
+    color: $muted;
+    border-left: solid $border;
+}
+
+#activity-bar {
+    width: 100%;
+    height: 2;
+    padding: 0 1;
+    color: $muted;
+}
+
+#activity-spinner {
+    display: none;
+    width: 3;
+    height: 1;
+    color: $accent;
+}
+
+#activity-bar.busy #activity-spinner {
+    display: block;
+}
+
+#activity-label {
+    width: 1fr;
+}
+
+#prompt-composer {
+    width: 100%;
+    height: 5;
+    background: $surface-raised;
+    border: round $border;
+}
+
+#prompt-composer:focus-within {
+    border: round $accent;
+}
+
+#prompt-mark {
+    width: 3;
+    height: 100%;
+    padding: 1 0 0 1;
+    color: $accent;
+    text-style: bold;
+}
+
+#prompt-input {
+    width: 1fr;
+    height: 100%;
+    border: none;
+    background: transparent;
+}
+
+#send-button {
+    width: 10;
+    min-width: 10;
+    height: 3;
+    margin: 0 1;
+    background: $accent;
+    color: $background;
+    border: none;
+}
+
+#shortcut-bar {
+    width: 100%;
+    height: 1;
+    text-align: center;
+    color: $muted;
+}
+
+#onboarding-card {
+    width: 64;
+    height: auto;
+    margin-top: 5;
+    padding: 3 5;
+    background: $surface;
+    border: round $border;
+}
+
+#onboarding-brand {
+    width: 100%;
+    text-align: center;
+    text-style: bold;
+    color: $accent;
+}
+
+#onboarding-tagline {
+    width: 100%;
+    margin-bottom: 3;
+    text-align: center;
+    color: $muted;
+}
+
+#key-instructions {
+    margin-bottom: 1;
+}
+
+#api-key-input {
+    margin-bottom: 1;
+    border: tall $border;
+}
+
+#api-key-input:focus {
+    border: tall $accent;
+}
+
+#verify-button {
+    width: 100%;
+    margin-top: 1;
+    background: $accent;
+    color: $background;
+}
+
+#verify-spinner {
+    width: 100%;
+    height: 2;
+    color: $accent;
+}
+
+#verification-status {
+    width: 100%;
+    min-height: 2;
+    text-align: center;
+    color: #73e6a1;
+}
+
+#verification-status.error {
+    color: $danger;
+}
+
+#credential-note {
+    width: 100%;
+    margin-top: 2;
+    text-align: center;
+    color: $muted;
+}
+
+Screen.-compact #project-path {
+    display: none;
+}
+
+Screen.-compact #connection-status {
+    text-align: right;
+}
+
+Screen.-compact #conversation-shell {
+    padding: 1;
+}
+
+Screen.-compact #welcome-panel {
+    width: 100%;
+    margin: 1 0;
+    padding: 1;
+}
+
+Screen.-compact #welcome-columns {
+    layout: vertical;
+}
+
+Screen.-compact .welcome-column {
+    width: 100%;
+}
+
+Screen.-compact .welcome-column.muted {
+    border-left: none;
+    border-top: solid $border;
+}
+
+Screen.-compact #shortcut-bar {
+    display: none;
+}
+
+Screen.-compact #onboarding-card {
+    width: 92%;
+    padding: 2;
+}
