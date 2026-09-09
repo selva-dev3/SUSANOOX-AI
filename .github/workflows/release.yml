@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m venv .venv
+      - run: .venv/bin/python -m pip install -e ".[dev]"
+      - run: .venv/bin/ruff format --check .
+      - run: .venv/bin/ruff check .
+      - run: .venv/bin/pyright
+      - run: .venv/bin/pytest
+      - name: Verify release tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          PACKAGE_VERSION=$(.venv/bin/python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
+      - run: .venv/bin/python -m build
+      - name: Verify built wheel
+        env:
+          PACKAGE_VERSION: ${{ github.ref_name }}
+        run: |
+          python -m venv /tmp/susanoox-release-check
+          /tmp/susanoox-release-check/bin/python -m pip install dist/*.whl
+          test "$(/tmp/susanoox-release-check/bin/susanoox --version)" = "Susanoox ${PACKAGE_VERSION#v}"
+          /tmp/susanoox-release-check/bin/python -c "from importlib.resources import files; assert files('susanoox.ui').joinpath('susanoox.tcss').is_file()"
+      - name: Verify built source distribution
+        env:
+          PACKAGE_VERSION: ${{ github.ref_name }}
+        run: |
+          python -m venv /tmp/susanoox-sdist-check
+          /tmp/susanoox-sdist-check/bin/python -m pip install dist/*.tar.gz
+          test "$(/tmp/susanoox-sdist-check/bin/susanoox --version)" = "Susanoox ${PACKAGE_VERSION#v}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
