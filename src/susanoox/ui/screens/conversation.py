@@ -5,6 +5,7 @@ import logging
 from contextlib import aclosing
 from typing import TYPE_CHECKING, ClassVar, cast
 
+from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -68,26 +69,36 @@ class ConversationScreen(Screen[None]):
         with Container(id="conversation-shell"):
             with ConversationView(id="conversation-view"):
                 with Vertical(id="welcome-panel"):
-                    yield Static("Welcome to Susanoox", id="welcome-title")
-                    yield Static(
-                        "A focused AI pair programmer for your terminal.",
-                        id="welcome-subtitle",
-                    )
+                    yield Static(f" SUSANOOX  v{__version__} ", id="welcome-title")
                     with Horizontal(id="welcome-columns"):
-                        with Vertical(classes="welcome-column"):
-                            yield Static("START HERE", classes="welcome-section-title")
+                        with Vertical(classes="welcome-column welcome-identity"):
+                            yield Static("Welcome back.", id="welcome-greeting")
+                            yield Static("  /\\\n /  \\\n/\\  /\\\n  \\/", id="welcome-mark")
+                            yield Static(
+                                Text(
+                                    f"{self._settings.model}  ·  {self._settings.project_path.name}"
+                                ),
+                                id="welcome-context",
+                            )
+                        with Vertical(classes="welcome-column welcome-actions"):
+                            yield Static(
+                                "TIPS FOR GETTING STARTED", classes="welcome-section-title"
+                            )
                             for starter_id, prompt in _STARTER_PROMPTS.items():
                                 yield Button(
                                     prompt,
                                     id=starter_id,
                                     classes="starter-action",
                                 )
-                        yield Static(
-                            "[b]CURRENT MILESTONE[/b]\n"
-                            "Streaming conversation is active.\n"
-                            "Project tools arrive in the next phase.",
-                            classes="welcome-column muted",
-                        )
+                            yield Static(
+                                "RECENT ACTIVITY",
+                                classes="welcome-section-title recent-title",
+                            )
+                            yield Static("No recent activity", id="recent-activity")
+                    yield Static(
+                        "Ctrl+Enter to send  ·  Esc to cancel",
+                        id="welcome-hint",
+                    )
             yield ActivityBar(id="activity-bar")
             yield PromptComposer(id="prompt-composer")
             yield Static(

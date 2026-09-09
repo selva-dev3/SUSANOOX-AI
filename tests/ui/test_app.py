@@ -6,7 +6,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import pytest
-from textual.widgets import Input, Static, TextArea
+from textual.widgets import Button, Input, Static, TextArea
 from textual.worker import WorkerCancelled
 
 from susanoox.config.credentials import Credential, CredentialSource
@@ -402,6 +402,110 @@ async def test_starter_action_populates_and_focuses_prompt(tmp_path: Path) -> No
         prompt_input = screen.query_one("#prompt-input", TextArea)
         assert prompt_input.text == "Explain a code concept"
         assert app.focused is prompt_input
+
+
+async def test_conversation_uses_compact_terminal_launch_layout(tmp_path: Path) -> None:
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+
+        welcome = screen.query_one("#welcome-panel")
+        assert "SUSANOOX" in str(screen.query_one("#welcome-title", Static).render())
+        assert "No recent activity" in str(screen.query_one("#recent-activity", Static).render())
+        assert welcome.region.width <= 136
+
+        prompt = screen.query_one("#prompt-composer")
+        assert prompt.region.height == 3
+        assert screen.query_one("#send-button", Button).display is True
+
+
+async def test_compact_send_button_submits_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeChatClient()
+    submitted_prompts: list[str] = []
+
+    def record_submission(screen: ConversationScreen) -> None:
+        submitted_prompts.append(screen.query_one("#prompt-input", TextArea).text)
+
+    monkeypatch.setattr(ConversationScreen, "action_submit", record_submission)
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        screen.query_one("#prompt-input", TextArea).text = "Explain this module"
+
+        composer = screen.query_one("#prompt-composer")
+        send_button = screen.query_one("#send-button", Button)
+        assert send_button.region.y >= composer.content_region.y
+        assert send_button.region.bottom <= composer.content_region.bottom
+        assert "Send" in app.export_screenshot()
+
+        await pilot.click("#send-button")
+        await pilot.pause()
+
+        assert submitted_prompts == ["Explain this module"]
+
+
+async def test_long_project_name_does_not_push_starters_out_of_compact_view(
+    tmp_path: Path,
+) -> None:
+    client = FakeChatClient()
+    settings = Settings(project_path=tmp_path / ("long-project-name-" * 6))
+    app = SusanooxApp(
+        settings=settings,
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+
+        context = screen.query_one("#welcome-context")
+        view = screen.query_one("#conversation-view")
+        assert context.region.height == 1
+        for starter_id in ("starter-explain", "starter-plan", "starter-debug"):
+            starter = screen.query_one(f"#{starter_id}")
+            assert starter.region.y >= view.region.y
+            assert starter.region.bottom <= view.region.bottom
+
+
+async def test_project_context_displays_markup_like_name_literally(tmp_path: Path) -> None:
+    client = FakeChatClient()
+    project_name = "[bold]project"
+    app = SusanooxApp(
+        settings=Settings(project_path=tmp_path / project_name),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+
+        rendered_context = screen.query_one("#welcome-context", Static).render()
+        assert project_name in str(rendered_context)
 
 
 async def test_clear_restores_welcome_without_removing_it(

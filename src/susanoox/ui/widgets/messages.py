@@ -16,7 +16,11 @@ class MessageBubble(Static):
         self.kind = kind
 
     def compose(self) -> ComposeResult:
-        labels = {"user": "YOU", "assistant": "SUSANOOX", "error": "ERROR"}
+        labels = {
+            "user": "› YOU",  # noqa: RUF001 - intentional prompt glyph
+            "assistant": "◆ SUSANOOX",
+            "error": "× ERROR",  # noqa: RUF001 - intentional error glyph
+        }
         yield Static(labels[self.kind], classes="message-label")
         yield Markdown(self._content, classes="message-content")
 

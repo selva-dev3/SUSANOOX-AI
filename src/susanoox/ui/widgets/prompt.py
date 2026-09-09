@@ -8,7 +8,12 @@ from textual.widgets import Button, Static, TextArea
 class PromptComposer(Horizontal):
     def compose(self) -> ComposeResult:
         yield Static("›", id="prompt-mark")  # noqa: RUF001 - intentional prompt glyph
-        yield TextArea(id="prompt-input", soft_wrap=True, show_line_numbers=False)
+        yield TextArea(
+            id="prompt-input",
+            soft_wrap=True,
+            show_line_numbers=False,
+            placeholder='Try "fix the failing tests"',
+        )
         yield Button("Send", id="send-button", variant="primary")
 
     @property
