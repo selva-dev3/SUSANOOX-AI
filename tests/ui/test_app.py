@@ -6,7 +6,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import pytest
-from textual.widgets import Input, Static
+from textual.widgets import Input, Static, TextArea
 from textual.worker import WorkerCancelled
 
 from susanoox.config.credentials import Credential, CredentialSource
@@ -313,3 +313,134 @@ async def test_render_cleanup_failure_does_not_mask_authentication_recovery(
         assert isinstance(app.screen, OnboardingScreen)
         status = str(app.screen.query_one("#verification-status", Static).render())
         assert "Authentication expired" in status
+
+
+@pytest.mark.parametrize("terminal_size", [(150, 30), (80, 24)])
+async def test_prompt_remains_visible_in_short_terminals(
+    tmp_path: Path, terminal_size: tuple[int, int]
+) -> None:
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=terminal_size) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        prompt = screen.query_one("#prompt-composer")
+
+        assert prompt.display
+        assert prompt.region.y >= 0
+        assert prompt.region.bottom <= screen.size.height
+        assert screen.has_class("-short")
+        assert screen.query_one("#shortcut-bar").display is False
+        assert screen.has_class("-compact") is (terminal_size[0] <= 80)
+
+
+async def test_live_resize_updates_responsive_layout(tmp_path: Path) -> None:
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+
+        compact_columns = list(screen.query(".welcome-column"))
+        assert screen.has_class("-compact")
+        assert screen.has_class("-short")
+        assert screen.query_one("#shortcut-bar").display is False
+        assert compact_columns[1].region.y > compact_columns[0].region.y
+
+        await pilot.resize_terminal(120, 40)
+        await pilot.pause()
+
+        wide_columns = list(screen.query(".welcome-column"))
+        assert screen.has_class("-compact") is False
+        assert screen.has_class("-short") is False
+        assert screen.query_one("#shortcut-bar").display
+        assert wide_columns[1].region.y == wide_columns[0].region.y
+        assert screen.query_one("#prompt-composer").region.bottom <= screen.size.height
+
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause()
+
+        compact_columns = list(screen.query(".welcome-column"))
+        assert screen.has_class("-compact")
+        assert screen.has_class("-short")
+        assert screen.query_one("#shortcut-bar").display is False
+        assert compact_columns[1].region.y > compact_columns[0].region.y
+        assert screen.query_one("#prompt-composer").region.bottom <= screen.size.height
+
+
+async def test_starter_action_populates_and_focuses_prompt(tmp_path: Path) -> None:
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+
+        await pilot.click("#starter-explain")
+        await pilot.pause()
+
+        prompt_input = screen.query_one("#prompt-input", TextArea)
+        assert prompt_input.text == "Explain a code concept"
+        assert app.focused is prompt_input
+
+
+async def test_clear_restores_welcome_without_removing_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeChatClient(response=("Done",))
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+    monkeypatch.setattr(MessageBubble, "compose", compose_plain_message)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+
+        worker = screen.stream_response("Prompt")
+        await worker.wait()
+        await pilot.pause()
+        assert screen.query_one("#welcome-panel").display is False
+        view = screen.query_one("#conversation-view")
+        for index in range(20):
+            await view.mount(Static(f"Transcript line {index}", classes="message"))
+        await pilot.pause()
+        view.scroll_end(animate=False, force=True, immediate=True)
+        await pilot.pause()
+        assert view.scroll_y > 0
+
+        screen.action_clear()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.query_one("#welcome-panel").display is True
+        assert len(screen.query(MessageBubble)) == 0
+        assert len(view.query(".message")) == 0
+        assert view.scroll_y == 0
+        first_action = screen.query_one("#starter-explain")
+        assert first_action.region.y >= view.region.y
+        assert first_action.region.y < view.region.bottom
