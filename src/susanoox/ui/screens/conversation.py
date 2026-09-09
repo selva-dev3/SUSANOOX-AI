@@ -10,7 +10,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Static
+from textual.widgets import Button, Static, TextArea
 from textual.worker import Worker
 
 from susanoox import __version__
@@ -30,6 +30,11 @@ if TYPE_CHECKING:
 
 _STREAM_RENDER_INTERVAL_SECONDS = 0.05
 _LOGGER = logging.getLogger(__name__)
+_STARTER_PROMPTS = {
+    "starter-explain": "Explain a code concept",
+    "starter-plan": "Plan a focused change",
+    "starter-debug": "Debug an error message",
+}
 
 
 class ConversationScreen(Screen[None]):
@@ -61,26 +66,28 @@ class ConversationScreen(Screen[None]):
             project_path=self._settings.project_path,
         )
         with Container(id="conversation-shell"):
-            yield ConversationView(id="conversation-view")
-            with Vertical(id="welcome-panel"):
-                yield Static("Welcome to Susanoox", id="welcome-title")
-                yield Static(
-                    "A focused AI pair programmer for your terminal.", id="welcome-subtitle"
-                )
-                with Horizontal(id="welcome-columns"):
+            with ConversationView(id="conversation-view"):
+                with Vertical(id="welcome-panel"):
+                    yield Static("Welcome to Susanoox", id="welcome-title")
                     yield Static(
-                        "[b]START HERE[/b]\n"
-                        "Explain a code concept\n"
-                        "Plan a focused change\n"
-                        "Debug an error message",
-                        classes="welcome-column",
+                        "A focused AI pair programmer for your terminal.",
+                        id="welcome-subtitle",
                     )
-                    yield Static(
-                        "[b]CURRENT MILESTONE[/b]\n"
-                        "Streaming conversation is active.\n"
-                        "Project tools arrive in the next phase.",
-                        classes="welcome-column muted",
-                    )
+                    with Horizontal(id="welcome-columns"):
+                        with Vertical(classes="welcome-column"):
+                            yield Static("START HERE", classes="welcome-section-title")
+                            for starter_id, prompt in _STARTER_PROMPTS.items():
+                                yield Button(
+                                    prompt,
+                                    id=starter_id,
+                                    classes="starter-action",
+                                )
+                        yield Static(
+                            "[b]CURRENT MILESTONE[/b]\n"
+                            "Streaming conversation is active.\n"
+                            "Project tools arrive in the next phase.",
+                            classes="welcome-column muted",
+                        )
             yield ActivityBar(id="activity-bar")
             yield PromptComposer(id="prompt-composer")
             yield Static(
@@ -94,6 +101,18 @@ class ConversationScreen(Screen[None]):
     @on(Button.Pressed, "#send-button")
     def send_button_pressed(self) -> None:
         self.action_submit()
+
+    @on(Button.Pressed, ".starter-action")
+    def starter_action_pressed(self, event: Button.Pressed) -> None:
+        starter_id = event.button.id
+        if starter_id is None:
+            return
+        prompt = _STARTER_PROMPTS.get(starter_id)
+        if prompt is None:
+            return
+        prompt_input = self.query_one("#prompt-input", TextArea)
+        prompt_input.text = prompt
+        prompt_input.focus()
 
     def action_submit(self) -> None:
         composer = self.query_one(PromptComposer)
@@ -165,8 +184,14 @@ class ConversationScreen(Screen[None]):
             return
         self._conversation.clear()
         view = self.query_one(ConversationView)
-        view.remove_children()
+        view.query(".message").remove()
         self.query_one("#welcome-panel").display = True
+        view.call_after_refresh(
+            view.scroll_home,
+            animate=False,
+            force=True,
+            immediate=True,
+        )
         self._set_busy(False, "Conversation cleared")
 
     def action_quit(self) -> None:

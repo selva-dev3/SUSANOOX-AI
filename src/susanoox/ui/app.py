@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import ClassVar
 
 from textual.app import App
-from textual.events import Resize
 
 from susanoox.config.credentials import CredentialSource, CredentialStore
 from susanoox.config.settings import Settings
@@ -24,6 +24,15 @@ class SusanooxApp(App[None]):
     CSS_PATH = "susanoox.tcss"
     TITLE = "Susanoox"
     ENABLE_COMMAND_PALETTE = False
+    # Textual's responsive breakpoint API requires mutable lists.
+    HORIZONTAL_BREAKPOINTS: ClassVar[list[tuple[int, str]]] | None = [  # noqa: RUF012
+        (0, "-compact"),
+        (81, "-wide"),
+    ]
+    VERTICAL_BREAKPOINTS: ClassVar[list[tuple[int, str]]] | None = [  # noqa: RUF012
+        (0, "-short"),
+        (36, "-tall"),
+    ]
 
     def __init__(
         self,
@@ -38,16 +47,17 @@ class SusanooxApp(App[None]):
         self._client_factory = client_factory
 
     def on_mount(self) -> None:
-        self._update_responsive_class()
         startup_error: str | None = None
         try:
             credential = self.credential_store.get_credential()
         except CredentialError as error:
             credential = None
             startup_error = str(error)
-        self.push_screen(
-            OnboardingScreen(existing_credential=credential, startup_error=startup_error)
+        screen = OnboardingScreen(
+            existing_credential=credential,
+            startup_error=startup_error,
         )
+        self.push_screen(screen)
 
     def create_client(self, api_key: str) -> ChatClient:
         return self._client_factory(api_key, self.settings)
@@ -73,9 +83,3 @@ class SusanooxApp(App[None]):
             )
         screen = OnboardingScreen(startup_error=message)
         self.switch_screen(screen)  # pyright: ignore[reportUnknownMemberType]
-
-    def on_resize(self, _event: Resize) -> None:
-        self._update_responsive_class()
-
-    def _update_responsive_class(self) -> None:
-        self.set_class(self.size.width < 80, "-compact")
