@@ -18,13 +18,21 @@ from textual.widgets import Button, Static, TextArea
 from textual.worker import Worker
 
 from susanoox import __version__
+from susanoox.agent.planner import PlanService
+from susanoox.agent.retry import RetryPolicy
+from susanoox.agent.types import AgentEvent, ExecutionPlan, PlanStatus
 from susanoox.commands import SlashCommand, UnknownCommandError, help_text, parse_slash_command
 from susanoox.config.credentials import CredentialSource
 from susanoox.config.settings import ModelName, Settings
+from susanoox.context.models import ContextSnapshot
+from susanoox.context.selector import ContextSelector
 from susanoox.conversations.service import ConversationService
 from susanoox.models.attachments import load_image_file, read_clipboard_image
 from susanoox.models.catalog import get_model
 from susanoox.models.protocol import ChatClient, ImageAttachment
+from susanoox.project.detector import detect_project
+from susanoox.sessions.storage import SessionStore
+from susanoox.summarization.service import ConversationSummarizer
 from susanoox.ui.screens.model_picker import ModelPickerScreen
 from susanoox.ui.streaming import StreamRenderer, cancelled_content
 from susanoox.ui.widgets.activity import ActivityBar
@@ -33,7 +41,7 @@ from susanoox.ui.widgets.header import AppHeader
 from susanoox.ui.widgets.logo import susanoox_mark
 from susanoox.ui.widgets.messages import ConversationView, MessageKind
 from susanoox.ui.widgets.prompt import PromptComposer, PromptInput
-from susanoox.utils.errors import AttachmentError, AuthenticationError, SusanooxError
+from susanoox.utils.errors import AttachmentError, AuthenticationError, SessionError, SusanooxError
 
 if TYPE_CHECKING:
     from susanoox.ui.app import SusanooxApp
@@ -70,19 +78,60 @@ class ConversationScreen(Screen[None]):
         client: ChatClient,
         credential_source: CredentialSource,
         pending_request: PendingRequest | None = None,
+        session_store: SessionStore | None = None,
+        session_id: str | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings
         self._client = client
+        project = detect_project(settings.project_path)
+        self._context_selector = (
+            ContextSelector(
+                project,
+                max_files=settings.context_max_files,
+                max_chars=settings.context_max_chars,
+                max_file_bytes=settings.context_max_file_bytes,
+            )
+            if settings.auto_context
+            else None
+        )
         self._conversation = (
             pending_request.conversation
             if pending_request is not None
-            else ConversationService(client)
+            else ConversationService(
+                client,
+                context_selector=self._context_selector,
+                summarizer=ConversationSummarizer(
+                    trigger_chars=settings.summary_trigger_chars,
+                    recent_messages=settings.summary_recent_messages,
+                ),
+                retry_policy=RetryPolicy(
+                    max_attempts=settings.api_retry_attempts,
+                    base_delay_seconds=settings.retry_base_delay_seconds,
+                ),
+                session_store=session_store,
+                session_id=session_id,
+                on_event=self._agent_event,
+            )
         )
-        self._conversation.replace_client(client)
+        self._conversation.replace_client(client, on_event=self._agent_event)
+        self._session_store = session_store
+        self._plan_service = PlanService()
+        self._current_plan: ExecutionPlan | None = (
+            session_store.latest_plan(self._conversation.session_id) if session_store else None
+        )
+        self._plan_context: ContextSnapshot | None = (
+            session_store.load_context_metadata(self._current_plan.context_snapshot_id)
+            if session_store
+            and self._current_plan is not None
+            and self._current_plan.context_snapshot_id is not None
+            else None
+        )
+        self._plan_mode = settings.plan_mode
         self._credential_source = credential_source
         self._pending_request = pending_request
         self._chat_worker: Worker[None] | None = None
+        self._plan_worker: Worker[None] | None = None
         self._active_model: ModelName = settings.model
         self._attachment_generation = 0
         self._attachment_loading = False
@@ -160,6 +209,29 @@ class ConversationScreen(Screen[None]):
             self._model_selected(pending.model)
             self.query_one(PromptInput).load_text(pending.prompt)
             self._set_busy(False, "Request restored after authentication · press Enter to retry")
+        elif len(self._conversation.messages) > 1 or (
+            self._current_plan is not None
+            and self._current_plan.status is PlanStatus.AWAITING_APPROVAL
+        ):
+            self._restore_messages()
+        if self._plan_mode:
+            self.query_one(ActivityBar).set_activity("Plan mode · describe a task", busy=False)
+
+    @work(group="session-restore")
+    async def _restore_messages(self) -> None:
+        view = self.query_one(ConversationView)
+        self.query_one("#welcome-panel").display = False
+        for message in self._conversation.messages[1:]:
+            if message.role == "user":
+                await view.add_message(message.content, kind="user")
+            elif message.role == "assistant":
+                await view.add_message(message.content, kind="assistant")
+        if (
+            self._current_plan is not None
+            and self._current_plan.status is PlanStatus.AWAITING_APPROVAL
+        ):
+            await view.add_message(self._plan_service.render(self._current_plan), kind="assistant")
+            self._set_busy(False, "Plan ready · awaiting approval")
 
     @on(Button.Pressed, "#send-button")
     def send_button_pressed(self) -> None:
@@ -224,10 +296,18 @@ class ConversationScreen(Screen[None]):
             return
         composer.clear()
         composer.clear_attachment()
+        if self._plan_mode and attachment is None:
+            self._plan_worker = self._create_plan(prompt)
+            return
         self._chat_worker = self.stream_response(prompt, attachment)
 
     @work(exclusive=True, group="chat")
-    async def stream_response(self, prompt: str, attachment: ImageAttachment | None = None) -> None:
+    async def stream_response(
+        self,
+        prompt: str,
+        attachment: ImageAttachment | None = None,
+        context_snapshot: ContextSnapshot | None = None,
+    ) -> None:
         view = self.query_one(ConversationView)
         self.query_one("#welcome-panel").display = False
         normalized_prompt = prompt or "Describe this image."
@@ -235,6 +315,29 @@ class ConversationScreen(Screen[None]):
         if attachment is not None:
             displayed_prompt = f"{normalized_prompt}\n\n📎 `{attachment.display_name}`"
         user_message = await view.add_message(displayed_prompt, kind="user")
+        if context_snapshot is None and self._context_selector is not None and attachment is None:
+            self._set_busy(True, "Selecting project context…")
+            try:
+                context_snapshot = await asyncio.to_thread(
+                    self._context_selector.select, normalized_prompt
+                )
+            except asyncio.CancelledError:
+                if self.is_mounted:
+                    self._set_busy(False, "Cancelled")
+                raise
+            except Exception as error:
+                _LOGGER.warning("Automatic context selection failed (%s)", type(error).__name__)
+                if self.is_mounted:
+                    await view.add_message(
+                        "Automatic project context could not be selected; "
+                        "the request was not sent.",
+                        kind="error",
+                    )
+                    self._set_busy(False, "Context selection failed")
+                return
+        if context_snapshot is not None and context_snapshot.files:
+            selected = "  ·  ".join(f"`{item.path}`" for item in context_snapshot.files)
+            await view.add_message(selected, kind="activity")
         assistant_message = await view.add_message("", kind="assistant")
         status = (
             "Waiting for vision · first request may take 10-20s…"
@@ -250,6 +353,7 @@ class ConversationScreen(Screen[None]):
                 normalized_prompt,
                 model=self._active_model,
                 images=images,
+                context_snapshot=context_snapshot,
             )
             async with aclosing(response_stream):
                 async for delta in response_stream:
@@ -325,12 +429,55 @@ class ConversationScreen(Screen[None]):
             composer.set_attachment(attachment)
         self._set_busy(False, "Request failed · edit the restored draft or press Enter to retry")
 
+    @work(exclusive=True, group="planning")
+    async def _create_plan(self, objective: str) -> None:
+        self._set_busy(True, "Planning…")
+        context = None
+        try:
+            if self._context_selector is not None:
+                self._agent_event(
+                    AgentEvent(kind="context_started", message="Selecting project context")
+                )
+                context = await asyncio.to_thread(self._context_selector.select, objective)
+            self._plan_context = context
+            version = self._current_plan.version + 1 if self._current_plan else 1
+            self._current_plan = self._plan_service.create(
+                session_id=self._conversation.session_id,
+                objective=objective,
+                context=context,
+                version=version,
+            )
+            if self._session_store is not None:
+                if context is not None:
+                    await asyncio.to_thread(
+                        self._session_store.save_context_metadata,
+                        self._conversation.session_id,
+                        context,
+                    )
+                await asyncio.to_thread(self._session_store.save_plan, self._current_plan)
+            self.show_local_message(self._plan_service.render(self._current_plan))
+            self._set_busy(False, "Plan ready · awaiting approval")
+        except SusanooxError as error:
+            self.show_local_message(str(error), kind="error")
+            self._set_busy(False, "Planning failed")
+        except Exception as error:
+            _LOGGER.warning("Unexpected planning failure (%s)", type(error).__name__)
+            self.show_local_message(
+                "The plan could not be created because of an unexpected local error.",
+                kind="error",
+            )
+            self._set_busy(False, "Planning failed")
+
     def action_cancel(self) -> None:
         if self._attachment_loading:
             self._invalidate_attachment_load()
             self.query_one(ActivityBar).set_activity("Image loading cancelled", busy=False)
         if self._chat_worker is not None and self._chat_worker.is_running:
             self._chat_worker.cancel()
+        if self._plan_worker is not None and self._plan_worker.is_running:
+            self._plan_worker.cancel()
+            if self.is_mounted:
+                self._set_busy(False, "Planning cancelled")
 
     def action_paste_image(self) -> None:
         if self._chat_worker is not None and self._chat_worker.is_running:
@@ -420,12 +567,165 @@ class ConversationScreen(Screen[None]):
             self.show_local_message(self._usage_text())
         elif command.name == "paste-image":
             self.action_paste_image()
+        elif command.name == "plan":
+            if command.argument:
+                self._plan_worker = self._create_plan(command.argument)
+            else:
+                self._plan_mode = not self._plan_mode
+                state = "enabled" if self._plan_mode else "disabled"
+                self.show_local_message(f"Plan mode **{state}**.")
+                self._set_busy(False, f"Plan mode {state}")
+        elif command.name == "approve":
+            self._plan_worker = self._approve_plan()
+        elif command.name == "revise":
+            self._plan_worker = self._revise_plan(command.argument)
+        elif command.name == "reject":
+            self._reject_plan()
+        elif command.name == "context":
+            self.show_local_message(self._context_text())
         elif command.name == "help":
             self.show_local_message(help_text())
         elif command.name == "clear":
             self.action_clear()
         elif command.name == "exit":
             self.action_quit()
+
+    @work(exclusive=True, group="planning")
+    async def _approve_plan(self) -> None:
+        if self._current_plan is None:
+            self.show_local_message("There is no plan awaiting approval.", kind="error")
+            return
+        try:
+            await self._refresh_plan_context(self._current_plan.objective)
+            self._current_plan = self._plan_service.approve(self._current_plan)
+        except SusanooxError as error:
+            self.show_local_message(str(error), kind="error")
+            self._set_busy(False, "Plan approval failed")
+            return
+        except Exception as error:
+            _LOGGER.warning("Plan approval failed (%s)", type(error).__name__)
+            self.show_local_message(
+                "The plan could not be approved because its context could not be refreshed.",
+                kind="error",
+            )
+            self._set_busy(False, "Plan approval failed")
+            return
+        self._persist_plan(self._current_plan)
+        objective = self._current_plan.objective
+        steps = "\n".join(f"{step.ordinal}. {step.title}" for step in self._current_plan.steps)
+        self._plan_mode = False
+        self.show_local_message(
+            "Plan approved. Sending the task and visible plan to the conversation model."
+        )
+        self._chat_worker = self.stream_response(
+            f"Use this approved visible plan to guide your response to the task. "
+            f"Do not claim to execute unavailable tools.\n\nTask:\n{objective}\n\nPlan:\n{steps}",
+            context_snapshot=(
+                self._plan_context
+                if self._plan_context is not None and self._plan_context.total_chars > 0
+                else None
+            ),
+        )
+
+    @work(exclusive=True, group="planning")
+    async def _revise_plan(self, feedback: str | None) -> None:
+        if self._current_plan is None:
+            self.show_local_message("There is no plan to revise.", kind="error")
+            return
+        try:
+            revised_objective = self._plan_service.revision_objective(
+                self._current_plan, feedback or ""
+            )
+            await self._refresh_plan_context(revised_objective, force=True)
+            self._current_plan = self._plan_service.revise(
+                self._current_plan,
+                feedback or "",
+                context=self._plan_context,
+            )
+        except SusanooxError as error:
+            self.show_local_message(str(error), kind="error")
+            self._set_busy(False, "Plan revision failed")
+            return
+        except Exception as error:
+            _LOGGER.warning("Plan revision failed (%s)", type(error).__name__)
+            self.show_local_message(
+                "The plan could not be revised because its context could not be refreshed.",
+                kind="error",
+            )
+            self._set_busy(False, "Plan revision failed")
+            return
+        self._persist_plan(self._current_plan)
+        self.show_local_message(self._plan_service.render(self._current_plan))
+        self._set_busy(False, "Revised plan ready · awaiting approval")
+
+    async def _refresh_plan_context(self, objective: str, *, force: bool = False) -> None:
+        if self._context_selector is None:
+            return
+        if not force and self._plan_context is not None and self._plan_context.total_chars > 0:
+            return
+        self._set_busy(True, "Refreshing plan context…")
+        context = await asyncio.to_thread(self._context_selector.select, objective)
+        self._plan_context = context
+        if self._current_plan is not None:
+            self._current_plan = self._current_plan.model_copy(
+                update={"context_snapshot_id": context.id}
+            )
+        if self._session_store is not None:
+            await asyncio.to_thread(
+                self._session_store.save_context_metadata,
+                self._conversation.session_id,
+                context,
+            )
+
+    def _reject_plan(self) -> None:
+        if self._current_plan is None:
+            self.show_local_message("There is no plan awaiting approval.", kind="error")
+            return
+        try:
+            self._current_plan = self._plan_service.reject(self._current_plan)
+        except SusanooxError as error:
+            self.show_local_message(str(error), kind="error")
+            return
+        self._persist_plan(self._current_plan)
+        self._plan_mode = False
+        self.show_local_message("Plan cancelled. No execution was started.")
+        self._set_busy(False, "Ready")
+
+    def _context_text(self) -> str:
+        snapshot = self._conversation.last_context or self._plan_context
+        if snapshot is None or not snapshot.files:
+            return "**◆ CONTEXT**\n\nNo files were selected for the last request."
+        lines = ["**◆ CONTEXT**", ""]
+        lines.extend(f"- ✓ `{item.path}` — {', '.join(item.reasons)}" for item in snapshot.files)
+        lines.append(f"\n{snapshot.total_chars:,} characters selected within the context budget.")
+        return "\n".join(lines)
+
+    def _agent_event(self, event: AgentEvent) -> None:
+        labels = {
+            "context_started": "Selecting project context…",
+            "context_ready": event.message,
+            "summarizing": "Compacting conversation context…",
+            "summary_ready": "Previous discussion summarized",
+            "retrying": f"↻ {event.message}",
+            "failed": event.message,
+        }
+        label = labels.get(event.kind)
+        if label is not None and self.is_mounted:
+            self.query_one(ActivityBar).set_activity(
+                label,
+                busy=event.kind in {"context_started", "context_ready", "summarizing", "retrying"},
+            )
+
+    def _persist_plan(self, plan: ExecutionPlan) -> None:
+        if self._session_store is None:
+            return
+        try:
+            self._session_store.save_plan(plan)
+        except SessionError:
+            _LOGGER.warning("Execution plan could not be persisted")
+            self.show_local_message(
+                "The plan state changed, but this session could not be saved.", kind="error"
+            )
 
     def _model_selected(self, model: ModelName | None) -> None:
         if model is None:
@@ -494,7 +794,13 @@ class ConversationScreen(Screen[None]):
         self._local_generation += 1
         self._invalidate_attachment_load()
         self.query_one(PromptComposer).clear_attachment()
-        self._conversation.clear()
+        try:
+            self._conversation.clear()
+        except SessionError:
+            self.show_local_message(
+                "The conversation was cleared in memory, but session storage could not be updated.",
+                kind="error",
+            )
         view = self.query_one(ConversationView)
         view.query(".message").remove()
         self.query_one("#welcome-panel").display = True

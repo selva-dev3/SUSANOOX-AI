@@ -1,14 +1,15 @@
 # Susanoox
 
 Susanoox is an independently designed, full-screen AI coding assistant for the terminal. The
-current `0.1.0` milestone provides secure API-key onboarding, live model selection, multi-turn
-conversation, exact API-reported usage, image attachments, live Markdown streaming, cancellation,
-and a responsive Textual interface.
+current `0.1.0` milestone provides secure API-key onboarding, live model selection, persistent
+multi-turn sessions, explicit planning, bounded automatic project context, rolling conversation
+compaction, observable retries, exact API-reported usage, image attachments, live Markdown
+streaming, cancellation, and a responsive Textual interface.
 
 > [!IMPORTANT]
-> Project inspection, file editing, shell execution, Git mutations, persisted sessions, and the
-> autonomous tool loop are planned but are not enabled in this milestone. Susanoox never pretends
-> that an unavailable tool ran.
+> Automatic context selection is read-only. File editing, shell execution, Git mutations, and the
+> autonomous tool loop are not enabled in this milestone. Approving a plan continues the AI
+> conversation using selected context; it does not pretend to mutate the project.
 
 ## Requirements
 
@@ -170,6 +171,64 @@ $env:SUSANOOX_API_KEY="..."; susanoox
 Avoid adding that command to shell history. Susanoox deliberately refuses a plaintext credential
 file fallback.
 
+## Access the current intelligence features
+
+Run `susanoox` from the project you want Susanoox to understand. The current features are
+available as follows:
+
+| Feature | How to access it |
+| --- | --- |
+| Plan Mode | Start with `susanoox --plan`, enter `/plan` to toggle it, or use `/plan <task>` |
+| Plan decisions | Use `/approve`, `/revise <feedback>`, or `/reject` after a plan appears |
+| Automatic context | Enabled by default for text prompts; enter `/context` to inspect selected files |
+| Persistent sessions | Run `susanoox sessions`, then resume with `susanoox --resume <id>` |
+| Smart summarization | Runs automatically when conversation history reaches its configured threshold |
+| Retry recovery | Runs automatically for eligible pre-response failures; press `Esc` to cancel |
+| Token usage | Enter `/usage` for exact API-reported usage in the current session |
+
+Plan Mode, automatic context, summarization, and retry behavior can be configured globally or in
+`<project>/.susanoox/config.toml`; see [Configuration](#configuration). Automatic context and
+summarization do not require separate commands during normal conversation.
+
+## Planning and sessions
+
+Start directly in explicit planning mode:
+
+```bash
+susanoox --plan
+```
+
+Enter a task to produce a concise visible plan before the conversation continues. Approve it with
+`/approve`, request a new version with `/revise <feedback>`, or cancel it with `/reject`. You can
+also create a plan at any time with `/plan <task>` or toggle planning with `/plan`. Plans contain
+proposed steps and validation intent, never hidden model reasoning. Approval is a terminal plan
+decision: it submits the proposal to the conversational model but does not mark individual steps
+as executed while project tools are unavailable.
+
+Successful conversations, summaries, plan state, and retry metadata are stored in a versioned
+SQLite database under the platform-standard Susanoox user data directory. Credentials and image
+bytes are never written to it. List project sessions and resume one by its displayed ID prefix:
+
+```bash
+susanoox sessions
+susanoox --resume 12ab34cd
+```
+
+Older messages remain stored as the recovery source of truth. When the active request approaches
+the configured budget, Susanoox sends a structured rolling summary plus recent messages rather
+than sending the full conversation indefinitely.
+
+## Automatic project context
+
+For text prompts, Susanoox ranks a bounded set of relevant files using path/content matches,
+test relationships, configuration files, and current Git changes. It respects Git ignore rules,
+rejects symlinks and binary or oversized files, excludes common credential files and build/cache
+directories, and redacts likely credentials from excerpts. Selected repository content is marked
+as untrusted data in the model request. Use `/context` after a request to inspect what was selected.
+
+Embedding-based retrieval with `susanoox-embed` is intentionally deferred until the deterministic
+local selector has established a safe and measurable baseline.
+
 ## Models
 
 The default model is `susanoox-fast`. Select the larger chat model for more complex work:
@@ -203,7 +262,12 @@ open the menu.
 | `/model` | Show all models and select an available chat model |
 | `/usage` | Show exact token usage reported by the API for the current session |
 | `/paste-image` | Attach an image from the operating-system clipboard |
-| `/clear` | Clear in-memory conversation context |
+| `/plan [task]` | Toggle plan mode or create a visible plan for a task |
+| `/approve` | Approve the current plan and continue |
+| `/revise <feedback>` | Create a revised plan version |
+| `/reject` | Cancel the current plan without continuing |
+| `/context` | Explain the files selected for the last request |
+| `/clear` | Clear active conversation context and its persisted summary |
 | `/help` | Show available commands |
 | `/exit` | Exit Susanoox |
 
@@ -260,7 +324,19 @@ and `<project>/.susanoox/config.toml`:
 [susanoox]
 model = "susanoox-fast"
 request_timeout_seconds = 60
+plan_mode = false
+auto_context = true
+context_max_files = 12
+context_max_chars = 40000
+context_max_file_bytes = 1000000
+summary_trigger_chars = 48000
+summary_recent_messages = 8
+api_retry_attempts = 2
+retry_base_delay_seconds = 0.5
 ```
+
+Set `api_retry_attempts = 0` to disable every automatic API retry, including overflow recovery
+and empty-response retries.
 
 CLI options override project configuration, which overrides global configuration. Project files
 cannot provide API keys or weaken application security rules.
@@ -272,8 +348,12 @@ cannot provide API keys or weaken application security rules.
 - Image payloads are kept in memory and are never written to diagnostic logs.
 - Attachments are validated by file signature, format, size, and safe image dimensions.
 - In-memory image context is capped at 20 MB; older binary payloads are pruned before newer ones.
-- The current conversation milestone exposes no filesystem, shell, network-tool, or Git authority
-  to the model.
+- Automatic context cannot leave the detected project root, skips symlinks and common secret files,
+  and treats repository content as untrusted.
+- Retries are bounded and occur only before public response text is emitted. Authentication,
+  permission denial, and ordinary bad requests are not retried.
+- The current milestone exposes no file-write, shell, network-tool, or Git mutation authority to
+  the model.
 - Future tools will be constrained to the project and mediated by a centralized approval policy.
 
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).

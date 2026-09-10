@@ -17,7 +17,7 @@ from tests.ui.test_app import MemoryCredentialStore
 async def test_keyboard_completion(tmp_path: Path, size: tuple[int, int]) -> None:
     client = FakeChatClient()
     app = SusanooxApp(
-        settings=Settings(project_path=tmp_path),
+        settings=Settings(project_path=tmp_path, auto_context=False),
         credential_store=MemoryCredentialStore(Credential("test-only", CredentialSource.KEYRING)),
         client_factory=lambda _key, _settings: client,
     )
@@ -48,7 +48,7 @@ async def test_keyboard_completion(tmp_path: Path, size: tuple[int, int]) -> Non
 async def test_dismiss_empty_arguments_and_chat(tmp_path: Path) -> None:
     client = FakeChatClient()
     app = SusanooxApp(
-        settings=Settings(project_path=tmp_path),
+        settings=Settings(project_path=tmp_path, auto_context=False),
         credential_store=MemoryCredentialStore(Credential("test-only", CredentialSource.KEYRING)),
         client_factory=lambda _key, _settings: client,
     )

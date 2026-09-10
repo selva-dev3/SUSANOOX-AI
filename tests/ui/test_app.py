@@ -11,9 +11,12 @@ from textual import events
 from textual.widgets import Button, Input, Static, TextArea
 from textual.worker import WorkerCancelled
 
+from susanoox.agent.planner import PlanService
 from susanoox.config.credentials import Credential, CredentialSource
 from susanoox.config.settings import ModelName, Settings
+from susanoox.context.models import ContextFile, ContextSnapshot
 from susanoox.models.protocol import ConversationMessage, ImageAttachment, StreamEvent, TextDelta
+from susanoox.sessions.storage import SessionStore
 from susanoox.ui.app import SusanooxApp
 from susanoox.ui.screens.conversation import ConversationScreen
 from susanoox.ui.screens.model_picker import ModelPickerScreen
@@ -95,6 +98,197 @@ class AuthenticationAfterFlushClient(FakeChatClient):
         raise AuthenticationError("Authentication expired.")
 
 
+async def test_plan_mode_waits_for_approval_before_model_request(tmp_path: Path) -> None:
+    client = FakeChatClient()
+    settings = Settings(project_path=tmp_path, auto_context=False, plan_mode=True)
+    app = SusanooxApp(
+        settings=settings,
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        prompt = screen.query_one("#prompt-input", TextArea)
+        prompt.text = "Fix authentication"
+        screen.action_submit()
+        worker = list(screen.workers)[-1]
+        await worker.wait()
+        await pilot.pause()
+
+        assert client.requests == []
+        assert any("PLAN" in message.markdown_text for message in screen.query(MessageBubble))
+
+        prompt.text = "/approve"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "planning"][-1].wait()
+        await [worker for worker in screen.workers if worker.group == "chat"][-1].wait()
+        assert len(client.requests) == 1
+
+
+async def test_resumed_plan_refreshes_context_from_its_objective(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    (project / "auth.py").write_text("def validate_login():\n    return True\n", encoding="utf-8")
+    store = SessionStore(tmp_path / "data" / "sessions.sqlite3")
+    store.initialize()
+    session = store.create(project_root=project, model="susanoox-fast")
+    stale_context = ContextSnapshot(
+        query="fix login validation",
+        project_root=str(project),
+        files=(
+            ContextFile(
+                path="auth.py",
+                score=10,
+                reasons=("path matches",),
+                excerpt="stale excerpt",
+            ),
+        ),
+        total_chars=13,
+    )
+    plan = PlanService().create(
+        session_id=session.id,
+        objective="fix login validation in auth",
+        context=stale_context,
+    )
+    store.save_context_metadata(session.id, stale_context)
+    store.save_plan(plan)
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=Settings(project_path=project, auto_context=True),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+        session_store=store,
+        session_id=session.id,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        screen.query_one("#prompt-input", TextArea).text = "/approve"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "planning"][-1].wait()
+        await [worker for worker in screen.workers if worker.group == "chat"][-1].wait()
+
+        context_messages = [
+            message.content
+            for message in client.requests[0]
+            if message.role == "system" and "untrusted reference data" in message.content
+        ]
+        assert len(context_messages) == 1
+        assert "def validate_login" in context_messages[0]
+        assert "stale excerpt" not in context_messages[0]
+
+
+async def test_plan_revision_reselects_context_for_new_feedback(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+    (tmp_path / "auth.py").write_text("def login():\n    return True\n", encoding="utf-8")
+    (tmp_path / "billing.py").write_text(
+        "def calculate_invoice():\n    return 100\n", encoding="utf-8"
+    )
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=Settings(project_path=tmp_path, auto_context=True),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        prompt = screen.query_one("#prompt-input", TextArea)
+        prompt.text = "/plan fix login auth"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "planning"][-1].wait()
+
+        prompt.text = "/revise also update billing invoice calculation"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "planning"][-1].wait()
+
+        prompt.text = "/approve"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "planning"][-1].wait()
+        await [worker for worker in screen.workers if worker.group == "chat"][-1].wait()
+
+        context_messages = [
+            message.content
+            for message in client.requests[0]
+            if message.role == "system" and "untrusted reference data" in message.content
+        ]
+        assert len(context_messages) == 1
+        assert "billing.py" in context_messages[0]
+        assert "calculate_invoice" in context_messages[0]
+
+
+async def test_resumed_session_messages_are_rendered(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "sessions.sqlite3")
+    store.initialize()
+    session = store.create(project_root=tmp_path, model="susanoox-fast")
+    store.save_messages(
+        session.id,
+        (
+            ConversationMessage(role="system", content="system"),
+            ConversationMessage(role="user", content="Previous question"),
+            ConversationMessage(role="assistant", content="Previous answer"),
+        ),
+    )
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: FakeChatClient(),
+        session_store=store,
+        session_id=session.id,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        messages = list(app.screen.query(MessageBubble))
+        assert [message.markdown_text for message in messages] == [
+            "Previous question",
+            "Previous answer",
+        ]
+
+
+async def test_selected_context_is_rendered_as_safe_activity(tmp_path: Path) -> None:
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+    snapshot = ContextSnapshot(
+        query="fix auth",
+        project_root=str(tmp_path),
+        files=(
+            ContextFile(
+                path="src/auth.py",
+                score=10,
+                reasons=("path match",),
+                excerpt="def login(): pass",
+            ),
+        ),
+        total_chars=17,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        worker = screen.stream_response("fix auth", context_snapshot=snapshot)
+        await worker.wait()
+
+        activity = [
+            message for message in screen.query(MessageBubble) if message.kind == "activity"
+        ]
+        assert len(activity) == 1
+        assert "src/auth.py" in activity[0].markdown_text
+
+
 def compose_plain_message(_message: MessageBubble) -> Sequence[Static]:
     """Avoid Textual's threaded Markdown parser in cancellation lifecycle tests."""
     return (Static("message"),)
@@ -159,7 +353,7 @@ async def test_public_prompt_events_preserve_typing_and_paste(tmp_path: Path) ->
 
 
 def make_settings(tmp_path: Path) -> Settings:
-    return Settings(project_path=tmp_path)
+    return Settings(project_path=tmp_path, auto_context=False)
 
 
 async def test_missing_key_opens_masked_onboarding(tmp_path: Path) -> None:

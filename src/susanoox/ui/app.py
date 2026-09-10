@@ -9,6 +9,7 @@ from susanoox.config.credentials import CredentialSource, CredentialStore
 from susanoox.config.settings import Settings
 from susanoox.models.client import SusanooxClient
 from susanoox.models.protocol import ChatClient
+from susanoox.sessions.storage import SessionStore
 from susanoox.ui.screens.conversation import ConversationScreen, PendingRequest
 from susanoox.ui.screens.onboarding import OnboardingScreen
 from susanoox.utils.errors import CredentialError
@@ -40,12 +41,16 @@ class SusanooxApp(App[None]):
         settings: Settings,
         credential_store: CredentialStore,
         client_factory: ClientFactory = _default_client_factory,
+        session_store: SessionStore | None = None,
+        session_id: str | None = None,
     ) -> None:
         super().__init__()
         self.settings = settings
         self.credential_store = credential_store
         self._client_factory = client_factory
         self._pending_request: PendingRequest | None = None
+        self._session_store = session_store
+        self._session_id = session_id
 
     def on_mount(self) -> None:
         startup_error: str | None = None
@@ -71,6 +76,8 @@ class SusanooxApp(App[None]):
             client=client,
             credential_source=credential_source,
             pending_request=pending_request,
+            session_store=self._session_store,
+            session_id=self._session_id,
         )
         self.switch_screen(screen)  # pyright: ignore[reportUnknownMemberType]
 

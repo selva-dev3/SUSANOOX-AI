@@ -20,3 +20,11 @@ def test_command_name_is_normalized_and_argument_is_preserved() -> None:
 def test_unknown_command_is_rejected_locally() -> None:
     with pytest.raises(UnknownCommandError, match="/unknown"):
         parse_slash_command("/unknown")
+
+
+@pytest.mark.parametrize("name", ["plan", "approve", "revise", "reject", "context"])
+def test_agent_intelligence_commands_are_available(name: str) -> None:
+    command = parse_slash_command(f"/{name}")
+
+    assert command is not None
+    assert command.name == name

@@ -7,7 +7,7 @@ from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-MessageKind = Literal["user", "assistant", "error"]
+MessageKind = Literal["user", "assistant", "activity", "error"]
 
 
 class MessageBubble(Static):
@@ -20,6 +20,7 @@ class MessageBubble(Static):
         labels = {
             "user": "› YOU",  # noqa: RUF001 - intentional prompt glyph
             "assistant": "◆ SUSANOOX",
+            "activity": "◇ CONTEXT",
             "error": "× ERROR",  # noqa: RUF001 - intentional error glyph
         }
         yield Static(labels[self.kind], classes="message-label")
