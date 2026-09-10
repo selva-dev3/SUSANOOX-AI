@@ -4,7 +4,8 @@ Susanoox is an independently designed, full-screen AI coding assistant for the t
 current `0.1.0` milestone provides secure API-key onboarding, live model selection, persistent
 multi-turn sessions, explicit planning, bounded automatic project context, rolling conversation
 compaction, observable retries, exact API-reported usage, image attachments, live Markdown
-streaming, cancellation, and a responsive Textual interface.
+streaming, cooperative cancellation, structured activity events, and a responsive Textual
+interface.
 
 > [!IMPORTANT]
 > Automatic context selection is read-only. File editing, shell execution, Git mutations, and the
@@ -184,11 +185,17 @@ available as follows:
 | Persistent sessions | Run `susanoox sessions`, then resume with `susanoox --resume <id>` |
 | Smart summarization | Runs automatically when conversation history reaches its configured threshold |
 | Retry recovery | Runs automatically for eligible pre-response failures; press `Esc` to cancel |
+| Live activity | Context selection, summarization, retries, completion, failure, and cancellation use a shared bounded activity lifecycle |
 | Token usage | Enter `/usage` for exact API-reported usage in the current session |
 
 Plan Mode, automatic context, summarization, and retry behavior can be configured globally or in
 `<project>/.susanoox/config.toml`; see [Configuration](#configuration). Automatic context and
 summarization do not require separate commands during normal conversation.
+
+The current agent foundation defines bounded task lifecycles, execution budgets, cooperative
+cancellation, and safe activity events for upcoming code-intelligence workflows. These internal
+contracts do not yet enable file writes, shell commands, test execution, or autonomous code
+changes; those capabilities will remain behind explicit tool registration and permission checks.
 
 ## Planning and sessions
 

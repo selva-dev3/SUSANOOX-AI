@@ -9,7 +9,7 @@ from typing import Final
 from uuid import uuid4
 
 from susanoox.agent.retry import RetryPolicy, collect_with_retry
-from susanoox.agent.types import AgentEvent, AttemptRecord
+from susanoox.agent.types import ActivityStatus, AgentEvent, AttemptRecord
 from susanoox.config.settings import ModelName
 from susanoox.context.models import ContextFile, ContextSnapshot
 from susanoox.context.selector import ContextSelector
@@ -147,6 +147,7 @@ class ConversationService:
             self._emit(
                 AgentEvent(
                     kind="context_ready",
+                    status=ActivityStatus.COMPLETED,
                     message=f"Reused {len(context_snapshot.files)} planned project file(s)",
                     current=len(context_snapshot.files),
                     total=len(context_snapshot.files) + context_snapshot.omitted_files,
@@ -166,6 +167,7 @@ class ConversationService:
             self._emit(
                 AgentEvent(
                     kind="context_ready",
+                    status=ActivityStatus.COMPLETED,
                     message=f"Selected {len(self._last_context.files)} relevant project file(s)",
                     current=len(self._last_context.files),
                     total=len(self._last_context.files) + self._last_context.omitted_files,
@@ -221,6 +223,7 @@ class ConversationService:
             self._emit(
                 AgentEvent(
                     kind="retrying",
+                    status=ActivityStatus.RETRYING,
                     message=f"Retrying after {decision.category}",
                     current=retry_number,
                     total=decision.max_attempts,
@@ -288,6 +291,7 @@ class ConversationService:
                 self._emit(
                     AgentEvent(
                         kind="failed",
+                        status=ActivityStatus.FAILED,
                         message="Response complete, but this session could not be saved",
                     )
                 )
@@ -321,7 +325,13 @@ class ConversationService:
                 )
             except SessionError:
                 _LOGGER.warning("Conversation summary could not be persisted")
-        self._emit(AgentEvent(kind="summary_ready", message="Previous discussion summarized"))
+        self._emit(
+            AgentEvent(
+                kind="summary_ready",
+                status=ActivityStatus.COMPLETED,
+                message="Previous discussion summarized",
+            )
+        )
 
     def _force_compact(self) -> ConversationSummary | None:
         if self._summarizer is None:
