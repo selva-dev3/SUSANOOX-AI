@@ -181,7 +181,7 @@ available as follows:
 | --- | --- |
 | Plan Mode | Start with `susanoox --plan`, enter `/plan` to toggle it, or use `/plan <task>` |
 | Plan decisions | Use `/approve`, `/revise <feedback>`, or `/reject` after a plan appears |
-| Automatic context | Enabled by default for text prompts; enter `/context` to inspect selected files |
+| Automatic context | Enabled by default; use `/context on`, `/context off`, or `/context toggle` |
 | Persistent sessions | Run `susanoox sessions`, then resume with `susanoox --resume <id>` |
 | Smart summarization | Runs automatically when conversation history reaches its configured threshold |
 | Retry recovery | Runs automatically for eligible pre-response failures; press `Esc` to cancel |
@@ -236,6 +236,19 @@ as untrusted data in the model request. Use `/context` after a request to inspec
 Embedding-based retrieval with `susanoox-embed` is intentionally deferred until the deterministic
 local selector has established a safe and measurable baseline.
 
+Inspect or change Auto Context while Susanoox is running:
+
+```text
+/context
+/context on
+/context off
+/context toggle
+```
+
+The toggle applies to future text requests and does not silently rewrite configuration files.
+Override configuration for one launch with `susanoox --auto-context` or
+`susanoox --no-auto-context`.
+
 ## Models
 
 The default model is `susanoox-fast`. Select the larger chat model for more complex work:
@@ -273,7 +286,7 @@ open the menu.
 | `/approve` | Approve the current plan and continue |
 | `/revise <feedback>` | Create a revised plan version |
 | `/reject` | Cancel the current plan without continuing |
-| `/context` | Explain the files selected for the last request |
+| `/context [on|off|toggle]` | Inspect selected files or change Auto Context for future requests |
 | `/clear` | Clear active conversation context and its persisted summary |
 | `/help` | Show available commands |
 | `/exit` | Exit Susanoox |

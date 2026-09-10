@@ -26,6 +26,16 @@ def test_parser_accepts_plan_mode() -> None:
     assert arguments.plan is True
 
 
+@pytest.mark.parametrize(
+    ("option", "expected"),
+    [("--auto-context", True), ("--no-auto-context", False)],
+)
+def test_parser_accepts_auto_context_override(option: str, expected: bool) -> None:
+    arguments = build_parser().parse_args([option])
+
+    assert arguments.auto_context is expected
+
+
 def test_sessions_command_lists_empty_project(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

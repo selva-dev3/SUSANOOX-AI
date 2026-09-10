@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import suppress
 from pathlib import Path
 
@@ -95,6 +95,20 @@ class AuthenticationAfterFlushClient(FakeChatClient):
         yield TextDelta("a")
         yield TextDelta("b")
         await self._render_failed.wait()
+        raise AuthenticationError("Authentication expired.")
+
+
+class AuthenticationOnRequestClient(FakeChatClient):
+    async def stream_chat(
+        self,
+        messages: Sequence[ConversationMessage],
+        *,
+        model: ModelName,
+    ) -> AsyncGenerator[StreamEvent, None]:
+        self.requests.append(tuple(messages))
+        self.models.append(model)
+        if False:
+            yield TextDelta("")
         raise AuthenticationError("Authentication expired.")
 
 
@@ -287,6 +301,215 @@ async def test_selected_context_is_rendered_as_safe_activity(tmp_path: Path) -> 
         ]
         assert len(activity) == 1
         assert "src/auth.py" in activity[0].markdown_text
+
+
+async def test_runtime_auto_context_toggle_controls_future_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeChatClient()
+    calls: list[str] = []
+    snapshot = ContextSnapshot(
+        query="fix auth",
+        project_root=str(tmp_path),
+        files=(
+            ContextFile(
+                path="src/auth.py",
+                score=10,
+                reasons=("path match",),
+                excerpt="def login(): pass",
+            ),
+        ),
+        total_chars=17,
+    )
+
+    def select_context(_selector: object, query: str) -> ContextSnapshot:
+        calls.append(query)
+        return snapshot.model_copy(update={"query": query})
+
+    async def run_inline(function: Callable[..., object], *args: object) -> object:
+        return function(*args)
+
+    monkeypatch.setattr(
+        "susanoox.ui.screens.conversation.ContextSelector.select",
+        select_context,
+    )
+    monkeypatch.setattr("susanoox.ui.screens.conversation.asyncio.to_thread", run_inline)
+    app = SusanooxApp(
+        settings=Settings(project_path=tmp_path, auto_context=False),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        header = screen.query_one("#connection-status", Static)
+        assert "context off" in str(header.render())
+
+        screen.query_one("#prompt-input", TextArea).text = "/context on"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "local-message"][-1].wait()
+        await pilot.pause()
+        assert "context on" in str(header.render())
+
+        enabled_worker = screen.stream_response("fix auth")
+        await enabled_worker.wait()
+        assert calls == ["fix auth"]
+        assert any("src/auth.py" in message.content for message in client.requests[-1])
+
+        screen.query_one("#prompt-input", TextArea).text = "/context off"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "local-message"][-1].wait()
+        await pilot.pause()
+        assert "context off" in str(header.render())
+
+        disabled_worker = screen.stream_response("follow up")
+        await disabled_worker.wait()
+        assert calls == ["fix auth"]
+        assert all("src/auth.py" not in message.content for message in client.requests[-1])
+
+        screen.query_one("#prompt-input", TextArea).text = "/context"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "local-message"][-1].wait()
+        context_message = screen.query(MessageBubble).last()
+        assert context_message.markdown_text.startswith("**◆ CONTEXT · DISABLED**")
+        assert "No files were selected for the last request" in context_message.markdown_text
+
+        screen.query_one("#prompt-input", TextArea).text = "/context toggle"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "local-message"][-1].wait()
+        assert "context on" in str(header.render())
+
+        screen.query_one("#prompt-input", TextArea).text = "/context sideways"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "local-message"][-1].wait()
+        assert screen.query(MessageBubble).last().kind == "error"
+        assert "Usage:" in screen.query(MessageBubble).last().markdown_text
+        assert "context on" in str(header.render())
+
+
+async def test_disabling_plan_context_persists_and_reenable_selects_fresh_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SessionStore(tmp_path / "data" / "sessions.sqlite3")
+    store.initialize()
+    session = store.create(project_root=tmp_path, model="susanoox-fast")
+    stale_context = ContextSnapshot(
+        query="fix auth",
+        project_root=str(tmp_path),
+        files=(
+            ContextFile(
+                path="stale.py",
+                score=10,
+                reasons=("path match",),
+                excerpt="stale implementation",
+            ),
+        ),
+        total_chars=20,
+    )
+    plan = PlanService().create(
+        session_id=session.id,
+        objective="fix auth",
+        context=stale_context,
+    )
+    store.save_context_metadata(session.id, stale_context)
+    store.save_plan(plan)
+    fresh_context = stale_context.model_copy(
+        update={
+            "id": "fresh-context",
+            "files": (
+                ContextFile(
+                    path="fresh.py",
+                    score=12,
+                    reasons=("content match",),
+                    excerpt="fresh implementation",
+                ),
+            ),
+            "total_chars": 20,
+        }
+    )
+
+    async def run_inline(function: Callable[..., object], *args: object) -> object:
+        return function(*args)
+
+    def select_fresh(_selector: object, _query: str) -> ContextSnapshot:
+        return fresh_context
+
+    monkeypatch.setattr(
+        "susanoox.ui.screens.conversation.ContextSelector.select",
+        select_fresh,
+    )
+    monkeypatch.setattr("susanoox.ui.screens.conversation.asyncio.to_thread", run_inline)
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=Settings(project_path=tmp_path, auto_context=True),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+        session_store=store,
+        session_id=session.id,
+    )
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+
+        screen.query_one("#prompt-input", TextArea).text = "/context off"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "local-message"][-1].wait()
+        persisted = store.latest_plan(session.id)
+        assert persisted is not None
+        assert persisted.context_snapshot_id is None
+
+        screen.query_one("#prompt-input", TextArea).text = "/context on"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "local-message"][-1].wait()
+        screen.query_one("#prompt-input", TextArea).text = "/approve"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "planning"][-1].wait()
+        await [worker for worker in screen.workers if worker.group == "chat"][-1].wait()
+
+        assert any("fresh.py" in message.content for message in client.requests[-1])
+        assert all("stale.py" not in message.content for message in client.requests[-1])
+
+
+async def test_authentication_recovery_preserves_runtime_auto_context_toggle(
+    tmp_path: Path,
+) -> None:
+    rejected = AuthenticationOnRequestClient()
+    accepted = FakeChatClient()
+    clients = iter((rejected, accepted))
+    app = SusanooxApp(
+        settings=Settings(project_path=tmp_path, auto_context=True),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: next(clients),
+    )
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        screen.query_one("#prompt-input", TextArea).text = "/context off"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "local-message"][-1].wait()
+
+        worker = screen.stream_response("retry after authentication")
+        await worker.wait()
+        await pilot.pause()
+        onboarding = app.screen
+        assert isinstance(onboarding, OnboardingScreen)
+
+        onboarding.query_one("#api-key-input", Input).value = "replacement-key"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        restored = app.screen
+        assert isinstance(restored, ConversationScreen)
+        status = str(restored.query_one("#connection-status", Static).render())
+        assert "context off" in status
 
 
 def compose_plain_message(_message: MessageBubble) -> Sequence[Static]:

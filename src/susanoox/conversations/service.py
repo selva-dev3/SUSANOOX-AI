@@ -173,6 +173,8 @@ class ConversationService:
                     total=len(self._last_context.files) + self._last_context.omitted_files,
                 )
             )
+        else:
+            self._last_context = None
         pending = self._apply_image_budget([*request_messages, user_message])
         response_parts: list[str] = []
         request_usage: TokenUsage | None = None

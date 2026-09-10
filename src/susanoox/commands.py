@@ -24,7 +24,7 @@ COMMANDS: Final[dict[CommandName, str]] = {
     "approve": "approve and continue with the current plan",
     "revise": "revise the current plan: /revise <feedback>",
     "reject": "cancel the current plan",
-    "context": "show files selected for the last request",
+    "context": "inspect or change automatic context: /context [on|off|toggle]",
     "clear": "clear the conversation",
     "help": "show this command list",
     "exit": "close Susanoox",

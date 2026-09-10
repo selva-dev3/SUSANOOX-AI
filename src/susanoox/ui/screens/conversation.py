@@ -62,6 +62,7 @@ class PendingRequest:
     attachment: ImageAttachment | None
     model: ModelName
     conversation: ConversationService
+    auto_context_enabled: bool
 
 
 class ConversationScreen(Screen[None]):
@@ -88,22 +89,22 @@ class ConversationScreen(Screen[None]):
         self._activity_events = ActivityPublisher()
         self._unsubscribe_activity = self._activity_events.subscribe(self._agent_event)
         project = detect_project(settings.project_path)
-        self._context_selector = (
-            ContextSelector(
-                project,
-                max_files=settings.context_max_files,
-                max_chars=settings.context_max_chars,
-                max_file_bytes=settings.context_max_file_bytes,
-            )
-            if settings.auto_context
-            else None
+        self._context_selector = ContextSelector(
+            project,
+            max_files=settings.context_max_files,
+            max_chars=settings.context_max_chars,
+            max_file_bytes=settings.context_max_file_bytes,
+        )
+        self._auto_context_enabled = (
+            pending_request.auto_context_enabled
+            if pending_request is not None
+            else settings.auto_context
         )
         self._conversation = (
             pending_request.conversation
             if pending_request is not None
             else ConversationService(
                 client,
-                context_selector=self._context_selector,
                 summarizer=ConversationSummarizer(
                     trigger_chars=settings.summary_trigger_chars,
                     recent_messages=settings.summary_recent_messages,
@@ -125,7 +126,8 @@ class ConversationScreen(Screen[None]):
         )
         self._plan_context: ContextSnapshot | None = (
             session_store.load_context_metadata(self._current_plan.context_snapshot_id)
-            if session_store
+            if self._auto_context_enabled
+            and session_store
             and self._current_plan is not None
             and self._current_plan.context_snapshot_id is not None
             else None
@@ -146,6 +148,7 @@ class ConversationScreen(Screen[None]):
             version=__version__,
             model=self._settings.model,
             project_path=self._settings.project_path,
+            auto_context_enabled=self._auto_context_enabled,
         )
         with Container(id="conversation-shell"):
             with ConversationView(id="conversation-view"):
@@ -318,7 +321,7 @@ class ConversationScreen(Screen[None]):
         if attachment is not None:
             displayed_prompt = f"{normalized_prompt}\n\n📎 `{attachment.display_name}`"
         user_message = await view.add_message(displayed_prompt, kind="user")
-        if context_snapshot is None and self._context_selector is not None and attachment is None:
+        if context_snapshot is None and self._auto_context_enabled and attachment is None:
             self._set_busy(True, "Selecting project context…")
             try:
                 context_snapshot = await asyncio.to_thread(
@@ -397,6 +400,7 @@ class ConversationScreen(Screen[None]):
                     attachment=attachment,
                     model=self._active_model,
                     conversation=self._conversation,
+                    auto_context_enabled=self._auto_context_enabled,
                 ),
             )
             return
@@ -437,7 +441,7 @@ class ConversationScreen(Screen[None]):
         self._set_busy(True, "Planning…")
         context = None
         try:
-            if self._context_selector is not None:
+            if self._auto_context_enabled:
                 self._activity_events.publish(
                     AgentEvent(kind="context_started", message="Selecting project context")
                 )
@@ -585,7 +589,19 @@ class ConversationScreen(Screen[None]):
         elif command.name == "reject":
             self._reject_plan()
         elif command.name == "context":
-            self.show_local_message(self._context_text())
+            if command.argument is None:
+                self.show_local_message(self._context_text())
+            else:
+                argument = command.argument.casefold()
+                if argument == "toggle":
+                    self._set_auto_context(not self._auto_context_enabled)
+                elif argument in {"on", "off"}:
+                    self._set_auto_context(argument == "on")
+                else:
+                    self.show_local_message(
+                        "Usage: `/context [on|off|toggle]`",
+                        kind="error",
+                    )
         elif command.name == "help":
             self.show_local_message(help_text())
         elif command.name == "clear":
@@ -662,7 +678,7 @@ class ConversationScreen(Screen[None]):
         self._set_busy(False, "Revised plan ready · awaiting approval")
 
     async def _refresh_plan_context(self, objective: str, *, force: bool = False) -> None:
-        if self._context_selector is None:
+        if not self._auto_context_enabled:
             return
         if not force and self._plan_context is not None and self._plan_context.total_chars > 0:
             return
@@ -695,13 +711,41 @@ class ConversationScreen(Screen[None]):
         self._set_busy(False, "Ready")
 
     def _context_text(self) -> str:
+        state = "ENABLED" if self._auto_context_enabled else "DISABLED"
         snapshot = self._conversation.last_context or self._plan_context
         if snapshot is None or not snapshot.files:
-            return "**◆ CONTEXT**\n\nNo files were selected for the last request."
-        lines = ["**◆ CONTEXT**", ""]
+            return (
+                f"**◆ CONTEXT · {state}**\n\n"
+                "No files were selected for the last request.\n\n"
+                "Use `/context on`, `/context off`, or `/context toggle` to change the state."
+            )
+        lines = [f"**◆ CONTEXT · {state}**", ""]
         lines.extend(f"- ✓ `{item.path}` — {', '.join(item.reasons)}" for item in snapshot.files)
         lines.append(f"\n{snapshot.total_chars:,} characters selected within the context budget.")
+        lines.append("\nThe setting applies to future text requests.")
         return "\n".join(lines)
+
+    def _set_auto_context(self, enabled: bool) -> None:
+        self._auto_context_enabled = enabled
+        self.query_one(AppHeader).set_auto_context(enabled)
+        if not enabled:
+            self._plan_context = None
+            if (
+                self._current_plan is not None
+                and self._current_plan.context_snapshot_id is not None
+            ):
+                self._current_plan = self._current_plan.model_copy(
+                    update={"context_snapshot_id": None}
+                )
+                self._persist_plan(self._current_plan)
+        state = "enabled" if enabled else "disabled"
+        detail = (
+            "Relevant project files will be selected for future text requests."
+            if enabled
+            else "Future requests will use conversation history without project file excerpts."
+        )
+        self.show_local_message(f"Auto Context **{state}**.\n\n{detail}")
+        self._set_busy(False, f"Auto Context {state}")
 
     def _agent_event(self, event: AgentEvent) -> None:
         labels = {

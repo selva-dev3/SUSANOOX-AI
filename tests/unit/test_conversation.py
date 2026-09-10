@@ -286,6 +286,17 @@ async def test_preselected_context_is_transient_and_marked_untrusted() -> None:
         "untrusted reference data" not in message.content for message in conversation.messages
     )
 
+    _ = [
+        part
+        async for part in conversation.send(
+            "follow up without project context",
+            model="susanoox-fast",
+        )
+    ]
+
+    assert conversation.last_context is None
+    assert all("untrusted reference data" not in message.content for message in client.requests[-1])
+
 
 async def test_context_overflow_retry_retains_reduced_selected_context() -> None:
     client = OverflowThenValidClient()
