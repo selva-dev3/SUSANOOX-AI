@@ -245,9 +245,23 @@ Inspect or change Auto Context while Susanoox is running:
 /context toggle
 ```
 
-The toggle applies to future text requests and does not silently rewrite configuration files.
-Override configuration for one launch with `susanoox --auto-context` or
-`susanoox --no-auto-context`.
+The header shows `context on` or `context off`, so the active state is always visible. Running
+`/context` without an argument reports the current state and the files selected for the most recent
+request. Turning Auto Context off affects future text requests only: normal conversation history is
+still sent, but Susanoox does not scan or attach project file excerpts. Any cached context attached
+to a pending plan is cleared; turning the feature back on selects fresh context before execution.
+
+Runtime changes apply only to the current app session and never rewrite configuration files. Use a
+launch flag for a one-run override:
+
+```bash
+susanoox --auto-context
+susanoox --no-auto-context
+```
+
+The effective precedence is CLI flag, then project configuration, then global configuration, with
+Auto Context enabled by default. Set `auto_context = false` in configuration when it should remain
+disabled across launches.
 
 ## Models
 
