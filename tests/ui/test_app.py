@@ -1,21 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import suppress
 from pathlib import Path
 
 import pytest
+from textual import events
 from textual.widgets import Button, Input, Static, TextArea
 from textual.worker import WorkerCancelled
 
 from susanoox.config.credentials import Credential, CredentialSource
-from susanoox.config.settings import Settings
-from susanoox.models.protocol import ConversationMessage
+from susanoox.config.settings import ModelName, Settings
+from susanoox.models.protocol import ConversationMessage, ImageAttachment, StreamEvent, TextDelta
 from susanoox.ui.app import SusanooxApp
 from susanoox.ui.screens.conversation import ConversationScreen
+from susanoox.ui.screens.model_picker import ModelPickerScreen
 from susanoox.ui.screens.onboarding import OnboardingScreen
-from susanoox.ui.widgets.messages import MessageBubble
+from susanoox.ui.widgets.messages import ConversationView, MessageBubble, MessageKind
+from susanoox.ui.widgets.prompt import PromptComposer, PromptInput
 from susanoox.utils.errors import AuthenticationError
 from tests.conftest import FakeChatClient
 
@@ -58,11 +62,15 @@ class ClosableStreamClient(FakeChatClient):
         self.stream_closed = False
 
     async def stream_chat(
-        self, messages: Sequence[ConversationMessage]
-    ) -> AsyncGenerator[str, None]:
+        self,
+        messages: Sequence[ConversationMessage],
+        *,
+        model: ModelName,
+    ) -> AsyncGenerator[StreamEvent, None]:
         self.requests.append(tuple(messages))
+        self.models.append(model)
         try:
-            yield "a"
+            yield TextDelta("a")
             await asyncio.Event().wait()
         finally:
             self.stream_closed = True
@@ -74,11 +82,15 @@ class AuthenticationAfterFlushClient(FakeChatClient):
         self._render_failed = render_failed
 
     async def stream_chat(
-        self, messages: Sequence[ConversationMessage]
-    ) -> AsyncGenerator[str, None]:
+        self,
+        messages: Sequence[ConversationMessage],
+        *,
+        model: ModelName,
+    ) -> AsyncGenerator[StreamEvent, None]:
         self.requests.append(tuple(messages))
-        yield "a"
-        yield "b"
+        self.models.append(model)
+        yield TextDelta("a")
+        yield TextDelta("b")
         await self._render_failed.wait()
         raise AuthenticationError("Authentication expired.")
 
@@ -86,6 +98,64 @@ class AuthenticationAfterFlushClient(FakeChatClient):
 def compose_plain_message(_message: MessageBubble) -> Sequence[Static]:
     """Avoid Textual's threaded Markdown parser in cancellation lifecycle tests."""
     return (Static("message"),)
+
+
+async def update_plain_message(message: MessageBubble, content: str) -> None:
+    message.query_one(Static).update(content)
+
+
+@pytest.mark.parametrize("after_start", [False, True])
+async def test_clear_invalidates_pending_local_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, after_start: bool
+) -> None:
+    monkeypatch.setattr(MessageBubble, "compose", compose_plain_message)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original = ConversationView.add_message
+
+    async def delayed_mount(
+        view: ConversationView, content: str, *, kind: MessageKind
+    ) -> MessageBubble:
+        started.set()
+        await release.wait()
+        return await original(view, content, kind=kind)
+
+    monkeypatch.setattr(ConversationView, "add_message", delayed_mount)
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        worker = screen.show_local_message("help output")
+        if after_start:
+            await asyncio.wait_for(started.wait(), 2)
+        screen.action_clear()
+        release.set()
+        await worker.wait()
+        await pilot.pause()
+        assert screen.query_one("#welcome-panel").display
+        assert not list(screen.query(MessageBubble))
+
+
+async def test_public_prompt_events_preserve_typing_and_paste(tmp_path: Path) -> None:
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        prompt = app.screen.query_one(PromptInput)
+        await pilot.press("a", "b")
+        app.post_message(events.Paste("Explain this image.png"))
+        await pilot.pause()
+        assert prompt.text == "abExplain this image.png"
 
 
 def make_settings(tmp_path: Path) -> Settings:
@@ -420,6 +490,7 @@ async def test_conversation_uses_compact_terminal_launch_layout(tmp_path: Path) 
 
         welcome = screen.query_one("#welcome-panel")
         assert "SUSANOOX" in str(screen.query_one("#welcome-title", Static).render())
+        assert "██" in str(screen.query_one("#welcome-mark", Static).render())
         assert "No recent activity" in str(screen.query_one("#recent-activity", Static).render())
         assert welcome.region.width <= 136
 
@@ -461,6 +532,278 @@ async def test_compact_send_button_submits_prompt(
         await pilot.pause()
 
         assert submitted_prompts == ["Explain this module"]
+
+
+async def test_enter_submits_and_shift_enter_inserts_newline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeChatClient()
+    submitted_prompts: list[str] = []
+
+    def record_submission(screen: ConversationScreen) -> None:
+        submitted_prompts.append(screen.query_one("#prompt-input", TextArea).text)
+
+    monkeypatch.setattr(ConversationScreen, "action_submit", record_submission)
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        prompt = app.screen.query_one("#prompt-input", TextArea)
+        prompt.text = "First line"
+        prompt.move_cursor((0, len(prompt.text)))
+
+        await pilot.press("shift+enter")
+        assert prompt.text == "First line\n"
+
+        await pilot.press("enter")
+        assert submitted_prompts == ["First line\n"]
+
+
+async def test_model_command_shows_all_models_and_switches_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeChatClient()
+    monkeypatch.setattr(MessageBubble, "compose", compose_plain_message)
+    monkeypatch.setattr(MessageBubble, "update_content", update_plain_message)
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        conversation = app.screen
+        assert isinstance(conversation, ConversationScreen)
+        conversation.query_one("#prompt-input", TextArea).text = "/model"
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ModelPickerScreen)
+        assert len(app.screen.query(".model-option")) == 3
+        assert app.screen.query_one("#model-susanoox-embed", Button).disabled
+        for option in app.screen.query(".model-option"):
+            assert option.region.y >= 0
+            assert option.region.bottom <= app.screen.size.height
+
+        await pilot.click("#model-susanoox-large")
+        await pilot.pause()
+
+        assert app.screen is conversation
+        status = str(conversation.query_one("#connection-status", Static).render())
+        assert "susanoox-large" in status
+
+        worker = conversation.stream_response("Use the selected model")
+        await worker.wait()
+        assert client.models[-1] == "susanoox-large"
+
+
+async def test_usage_command_is_local_and_reports_exact_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeChatClient()
+    monkeypatch.setattr(MessageBubble, "compose", compose_plain_message)
+    monkeypatch.setattr(MessageBubble, "update_content", update_plain_message)
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        worker = screen.stream_response("Count this request")
+        await worker.wait()
+        request_count = len(client.requests)
+        screen.query_one("#prompt-input", TextArea).text = "/usage"
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert len(client.requests) == request_count
+        usage_message = list(screen.query(MessageBubble))[-1]
+        assert "Prompt: 3 tokens" in usage_message.markdown_text
+        assert "Completion: 2 tokens" in usage_message.markdown_text
+        assert "Total: 5 tokens" in usage_message.markdown_text
+
+        client.usage = None
+        await screen.stream_response("No usage metadata").wait()
+        screen.query_one("#prompt-input", TextArea).text = "/usage"
+        await pilot.press("enter")
+        await pilot.pause()
+        usage_message = list(screen.query(MessageBubble))[-1]
+        assert "Partial session usage" in usage_message.markdown_text
+        assert "1 request(s) have unknown usage" in usage_message.markdown_text
+
+
+async def test_pending_and_replaced_attachment_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    slow_finished = threading.Event()
+    slow = ImageAttachment("slow.png", "image/png", b"slow")
+    fast = ImageAttachment("fast.png", "image/png", b"fast")
+
+    def loader(path: Path) -> ImageAttachment:
+        if path.name == "slow.png":
+            started.set()
+            release.wait(timeout=5)
+            slow_finished.set()
+            return slow
+        return fast
+
+    monkeypatch.setattr("susanoox.ui.screens.conversation.load_image_file", loader)
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, ConversationScreen)
+            screen.load_path_attachment(Path("slow.png"))
+            assert await asyncio.to_thread(started.wait, 2)
+            composer = screen.query_one(PromptComposer)
+            screen.query_one("#prompt-input", TextArea).text = "Read it"
+            screen.action_submit()
+            assert client.requests == []
+            assert composer.text == "Read it"
+
+            screen.load_path_attachment(Path("fast.png"))
+            for worker in list(screen.workers):
+                if not worker.is_cancelled:
+                    await worker.wait()
+            assert composer.attachment == fast
+            release.set()
+            assert await asyncio.to_thread(slow_finished.wait, 2)
+            await pilot.pause()
+            assert composer.attachment == fast
+    finally:
+        release.set()
+
+
+async def test_cancelled_attachment_does_not_reappear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def loader() -> ImageAttachment:
+        started.set()
+        release.wait(timeout=5)
+        finished.set()
+        return ImageAttachment("clipboard.png", "image/png", b"image")
+
+    monkeypatch.setattr("susanoox.ui.screens.conversation.read_clipboard_image", loader)
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, ConversationScreen)
+            screen.query_one("#prompt-input", TextArea).text = "/paste-image"
+            await pilot.press("enter")
+            assert await asyncio.to_thread(started.wait, 2)
+            screen.action_cancel()
+            release.set()
+            assert await asyncio.to_thread(finished.wait, 2)
+            await pilot.pause()
+            assert screen.query_one(PromptComposer).attachment is None
+            assert client.requests == []
+    finally:
+        release.set()
+
+
+async def test_embed_model_is_shown_but_rejected_for_chat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeChatClient()
+    monkeypatch.setattr(MessageBubble, "compose", compose_plain_message)
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        screen.query_one("#prompt-input", TextArea).text = "/model susanoox-embed"
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert client.requests == []
+        error_message = list(screen.query(MessageBubble))[-1]
+        assert "embeddings" in error_message.markdown_text
+        assert "cannot be used for conversation" in error_message.markdown_text
+
+
+async def test_image_attachment_can_be_sent_and_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeChatClient()
+    monkeypatch.setattr(MessageBubble, "compose", compose_plain_message)
+    monkeypatch.setattr(MessageBubble, "update_content", update_plain_message)
+    app = SusanooxApp(
+        settings=make_settings(tmp_path),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+    )
+    attachment = ImageAttachment(
+        filename="screen.png",
+        media_type="image/png",
+        data=b"image-bytes",
+    )
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        composer = screen.query_one(PromptComposer)
+        composer.set_attachment(attachment)
+        await pilot.pause()
+        attachment_button = screen.query_one("#attachment-button", Button)
+        assert attachment_button.display
+        assert "screen.png" in str(attachment_button.label)
+
+        await pilot.click("#attachment-button")
+        await pilot.pause()
+
+        assert composer.attachment is None
+        assert attachment_button.display is False
+
+        composer.set_attachment(attachment)
+        screen.query_one("#prompt-input", TextArea).text = "Read this image"
+        screen.action_submit()
+        worker = list(screen.workers)[-1]
+        await worker.wait()
+
+        assert client.requests[-1][-1].images == (attachment,)
+        assert composer.attachment is None
 
 
 async def test_long_project_name_does_not_push_starters_out_of_compact_view(

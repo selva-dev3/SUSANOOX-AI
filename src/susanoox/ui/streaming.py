@@ -23,6 +23,7 @@ class StreamRenderer:
         self._last_rendered_at = clock()
         self._last_rendered_content = ""
         self._pending_flush: asyncio.Task[None] | None = None
+        self._flush_rendering = False
         self._render_lock = asyncio.Lock()
         self.content = ""
 
@@ -74,14 +75,19 @@ class StreamRenderer:
 
     async def _flush_after(self, delay: float, render: RenderCallback) -> None:
         await asyncio.sleep(delay)
-        await self._render(render)
+        self._flush_rendering = True
+        try:
+            await self._render(render)
+        finally:
+            self._flush_rendering = False
 
     async def _render(self, render: RenderCallback) -> None:
         async with self._render_lock:
             if self.content == self._last_rendered_content:
                 return
-            await render(self.content)
-            self._last_rendered_content = self.content
+            snapshot = self.content
+            await render(snapshot)
+            self._last_rendered_content = snapshot
             self._last_rendered_at = self._clock()
 
     async def _cancel_pending_flush(self) -> None:
@@ -93,6 +99,9 @@ class StreamRenderer:
             with suppress(asyncio.CancelledError):
                 await pending
             return
-        pending.cancel()
-        with suppress(asyncio.CancelledError):
+        if not self._flush_rendering:
+            pending.cancel()
+            with suppress(asyncio.CancelledError):
+                await pending
+        else:
             await pending

@@ -24,6 +24,7 @@ classifiers = [
 dependencies = [
   "keyring>=25.6,<27",
   "openai>=1.68,<3",
+  "pillow>=11.3,<13",
   "platformdirs>=4.3,<5",
   "textual>=1.0,<9",
 ]
