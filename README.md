@@ -246,6 +246,10 @@ Inside the conversation, enter `/model` to open the model picker or use a direct
 `susanoox-embed` is reserved for the future context-retrieval engine and cannot be selected as a
 chat model.
 
+`susanoox-vision` handles images and OCR. Select it with `/model susanoox-vision` or
+`susanoox --model susanoox-vision`; attaching an image also selects it automatically.
+The provider describes this service as shared TEST/DEV infrastructure, not production traffic.
+
 ## Conversation commands
 
 Type `/` at the start of the prompt to show command suggestions; keep typing to filter them.
@@ -277,7 +281,8 @@ are explicitly marked partial. Clearing chat history does not reset session usag
 Paste or drag an absolute PNG, JPEG, GIF, or WebP file path into the prompt to attach it.
 Relative paths must start with `./` or `../`, or be quoted (for example, `"screen shot.png"`).
 Bare filenames and ordinary prose remain text. On supported
-desktops, `/paste-image` reads an image directly from the operating-system clipboard.
+desktops, focus the prompt and press **Ctrl+V** to attach a copied image directly.
+`/paste-image` also reads an image from the operating-system clipboard.
 `Ctrl+Shift+V` also works when the terminal forwards it; many terminals reserve it for text paste. The
 attachment is shown before sending and can be removed with the attachment control.
 
@@ -285,7 +290,14 @@ Images are validated before use and limited to 10 MB. Clipboard support depends 
 system and installed terminal/clipboard facilities; when it is unavailable, Susanoox displays a
 file-path fallback. Image understanding also requires the selected Susanoox chat model and API
 deployment to accept OpenAI-compatible image content.
-Vision capability for Fast and Large is currently unverified; the attachment status says so.
+Attaching an image automatically selects `susanoox-vision`. Fast and Large are text-only.
+The first vision request after idle may take 10–20 seconds to warm up; the UI stays responsive.
+Press Enter to send the image with your text (or alone for a description). Follow-up requests
+stay on vision so the image remains available. Remove pending images and `/clear` image history
+before switching back to a text-only model. Failed requests restore the draft for an explicit retry.
+Use your terminal's normal text-paste gesture for text; Ctrl+V in the composer is image-only.
+Some terminals intercept shortcuts, and remote/SSH sessions may not expose your desktop clipboard.
+Use `/paste-image` or a local image-file path when direct clipboard access is unavailable.
 Known non-vision models are blocked before image requests are sent. Submission waits for image
 validation to finish; replaced or cancelled loads cannot overwrite the current attachment.
 
@@ -295,7 +307,8 @@ validation to finish; replaced or cancelled loads cannot overwrite the current a
 | --- | --- |
 | `Enter` | Send the prompt |
 | `Shift+Enter` | Insert a new line |
-| `Ctrl+Shift+V` | Attach an image from the OS clipboard |
+| `Ctrl+V` | Attach an image from the OS clipboard while the prompt is focused |
+| `Ctrl+Shift+V` | Image-paste alias if forwarded; often reserved by the terminal for text paste |
 | `Esc` | Cancel the active response |
 | `Ctrl+K` | Clear in-memory conversation context |
 | `Ctrl+Q` | Exit |

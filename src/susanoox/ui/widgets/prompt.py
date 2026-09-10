@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Button, Static, TextArea
@@ -33,6 +35,17 @@ def pasted_image_path(text: str) -> Path | None:
 
 
 class PromptInput(TextArea):
+    BINDINGS: ClassVar = [
+        Binding("ctrl+v", "paste_image", "Paste image", priority=True),
+    ]
+
+    class ImageClipboardRequested(Message):
+        pass
+
+    def action_paste_image(self) -> None:
+        if not self.disabled and not self.read_only:
+            self.post_message(self.ImageClipboardRequested())
+
     class Submitted(Message):
         pass
 

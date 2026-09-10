@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator, Sequence
 import pytest
 
 from susanoox.agent.retry import RetryPolicy
+from susanoox.agent.types import AgentEvent
 from susanoox.config.settings import ModelName
 from susanoox.context.models import ContextFile, ContextSnapshot
 from susanoox.conversations.service import MAX_CONTEXT_IMAGE_BYTES, ConversationService
@@ -333,3 +334,30 @@ async def test_context_overflow_retry_retains_reduced_selected_context() -> None
             if message.role == "system" and "untrusted reference data" in message.content
         )
     )
+
+
+async def test_reauthentication_rebinds_activity_handler_with_client() -> None:
+    old_events: list[AgentEvent] = []
+    new_events: list[AgentEvent] = []
+    original = FakeChatClient()
+    replacement = FakeChatClient()
+    conversation = ConversationService(original, on_event=old_events.append)
+    conversation.replace_client(replacement, on_event=new_events.append)
+    snapshot = ContextSnapshot(
+        query="auth",
+        project_root="/project",
+        files=(),
+        total_chars=0,
+    )
+
+    _ = [
+        part
+        async for part in conversation.send(
+            "hello", model="susanoox-fast", context_snapshot=snapshot
+        )
+    ]
+
+    assert original.requests == []
+    assert len(replacement.requests) == 1
+    assert old_events == []
+    assert [event.kind for event in new_events] == ["context_ready"]

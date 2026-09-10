@@ -9,8 +9,10 @@ from typing import Final, Literal, TypeAlias, cast
 from susanoox.config.paths import AppPaths
 from susanoox.utils.errors import ConfigurationError
 
-ModelName: TypeAlias = Literal["susanoox-fast", "susanoox-large", "susanoox-embed"]
-CHAT_MODELS: Final[tuple[ModelName, ...]] = ("susanoox-fast", "susanoox-large")
+ModelName: TypeAlias = Literal[
+    "susanoox-fast", "susanoox-large", "susanoox-vision", "susanoox-embed"
+]
+CHAT_MODELS: Final[tuple[ModelName, ...]] = ("susanoox-fast", "susanoox-large", "susanoox-vision")
 ALL_MODELS: Final[tuple[ModelName, ...]] = (*CHAT_MODELS, "susanoox-embed")
 DEFAULT_MODEL: Final[ModelName] = "susanoox-fast"
 DEFAULT_BASE_URL: Final = "https://llm.herd.casa/v1"

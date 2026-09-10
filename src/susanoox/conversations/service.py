@@ -78,6 +78,17 @@ class ConversationService:
         self._completed_requests = sum(message.role == "assistant" for message in loaded)
         self._unaccounted_requests = 0
 
+    def replace_client(
+        self,
+        client: ChatClient,
+        *,
+        on_event: Callable[[AgentEvent], None] | None = None,
+    ) -> None:
+        """Rebind runtime dependencies while preserving conversation state."""
+        self._client = client
+        if on_event is not None:
+            self._on_event = on_event
+
     @property
     def messages(self) -> tuple[ConversationMessage, ...]:
         return tuple(self._messages)

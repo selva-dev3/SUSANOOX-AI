@@ -781,7 +781,7 @@ async def test_model_command_shows_all_models_and_switches_selection(
         await pilot.pause()
 
         assert isinstance(app.screen, ModelPickerScreen)
-        assert len(app.screen.query(".model-option")) == 3
+        assert len(app.screen.query(".model-option")) == 4
         assert app.screen.query_one("#model-susanoox-embed", Button).disabled
         for option in app.screen.query(".model-option"):
             assert option.region.y >= 0

@@ -125,7 +125,7 @@ async def test_client_serializes_image_as_openai_compatible_content(
         event
         async for event in client.stream_chat(
             [ConversationMessage(role="user", content="Read this", images=(attachment,))],
-            model="susanoox-fast",
+            model="susanoox-vision",
         )
     ]
 

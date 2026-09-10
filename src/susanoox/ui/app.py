@@ -10,7 +10,7 @@ from susanoox.config.settings import Settings
 from susanoox.models.client import SusanooxClient
 from susanoox.models.protocol import ChatClient
 from susanoox.sessions.storage import SessionStore
-from susanoox.ui.screens.conversation import ConversationScreen
+from susanoox.ui.screens.conversation import ConversationScreen, PendingRequest
 from susanoox.ui.screens.onboarding import OnboardingScreen
 from susanoox.utils.errors import CredentialError
 
@@ -48,6 +48,7 @@ class SusanooxApp(App[None]):
         self.settings = settings
         self.credential_store = credential_store
         self._client_factory = client_factory
+        self._pending_request: PendingRequest | None = None
         self._session_store = session_store
         self._session_id = session_id
 
@@ -68,16 +69,26 @@ class SusanooxApp(App[None]):
         return self._client_factory(api_key, self.settings)
 
     def enter_conversation(self, client: ChatClient, credential_source: CredentialSource) -> None:
+        pending_request = self._pending_request
+        self._pending_request = None
         screen = ConversationScreen(
             settings=self.settings,
             client=client,
             credential_source=credential_source,
+            pending_request=pending_request,
             session_store=self._session_store,
             session_id=self._session_id,
         )
         self.switch_screen(screen)  # pyright: ignore[reportUnknownMemberType]
 
-    def require_authentication(self, message: str, source: CredentialSource) -> None:
+    def require_authentication(
+        self,
+        message: str,
+        source: CredentialSource,
+        *,
+        pending_request: PendingRequest | None = None,
+    ) -> None:
+        self._pending_request = pending_request
         if source is CredentialSource.KEYRING:
             try:
                 self.credential_store.delete_api_key()
