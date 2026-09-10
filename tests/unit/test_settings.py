@@ -117,3 +117,24 @@ def test_project_config_cannot_expand_context_beyond_hard_limit(tmp_path: Path) 
 
     with pytest.raises(ConfigurationError, match="context_max_chars"):
         load_settings(project_path=tmp_path, paths=paths)
+
+
+@pytest.mark.parametrize("override", [True, False])
+def test_cli_auto_context_override_wins_over_file_configuration(
+    tmp_path: Path, override: bool
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        f"[susanoox]\nauto_context = {str(not override).lower()}\n",
+        encoding="utf-8",
+    )
+    paths = AppPaths(config_dir, tmp_path / "data", tmp_path / "cache", tmp_path / "logs")
+
+    settings = load_settings(
+        project_path=tmp_path,
+        auto_context_override=override,
+        paths=paths,
+    )
+
+    assert settings.auto_context is override

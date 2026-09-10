@@ -27,6 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
     session.add_argument("--resume", metavar="SESSION", help="Resume a saved session.")
     session.add_argument("--new", action="store_true", help="Start a new session.")
     parser.add_argument("--plan", action="store_true", help="Start in planning mode.")
+    parser.add_argument(
+        "--auto-context",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable automatic project context for this run.",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable redacted debug logs.")
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("config", help="Inspect or update configuration.")
@@ -65,6 +71,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             model_override=args.model,
             debug=args.debug,
             plan_override=True if args.plan else None,
+            auto_context_override=args.auto_context,
         )
         log_path = paths.log_dir / "susanoox.log"
         logging_available = configure_logging(log_path, debug=settings.debug)

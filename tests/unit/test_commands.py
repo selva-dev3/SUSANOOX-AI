@@ -28,3 +28,12 @@ def test_agent_intelligence_commands_are_available(name: str) -> None:
 
     assert command is not None
     assert command.name == name
+
+
+@pytest.mark.parametrize("argument", ["on", "off", "toggle"])
+def test_context_command_preserves_toggle_argument(argument: str) -> None:
+    command = parse_slash_command(f"/context {argument}")
+
+    assert command is not None
+    assert command.name == "context"
+    assert command.argument == argument

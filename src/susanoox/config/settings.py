@@ -124,6 +124,7 @@ def load_settings(
     model_override: str | None = None,
     debug: bool = False,
     plan_override: bool | None = None,
+    auto_context_override: bool | None = None,
     paths: AppPaths | None = None,
 ) -> Settings:
     """Load global then project preferences, followed by explicit CLI overrides."""
@@ -141,4 +142,6 @@ def load_settings(
         settings = replace(settings, model=cast(ModelName, model_override))
     if plan_override is not None:
         settings = replace(settings, plan_mode=plan_override)
+    if auto_context_override is not None:
+        settings = replace(settings, auto_context=auto_context_override)
     return settings
