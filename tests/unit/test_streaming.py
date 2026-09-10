@@ -92,7 +92,7 @@ async def test_active_background_render_is_drained(operation: str) -> None:
             await release.wait()
         rendered.append(content)
 
-    renderer = StreamRenderer(interval_seconds=0.001)
+    renderer = StreamRenderer(interval_seconds=0.001, clock=lambda: 0.0)
     await renderer.add("a", render)
     await renderer.add("b", render)
     await asyncio.wait_for(started.wait(), 1)
