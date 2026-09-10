@@ -18,6 +18,7 @@ from textual.widgets import Button, Static, TextArea
 from textual.worker import Worker
 
 from susanoox import __version__
+from susanoox.agent.activity import ActivityPublisher
 from susanoox.agent.planner import PlanService
 from susanoox.agent.retry import RetryPolicy
 from susanoox.agent.types import AgentEvent, ExecutionPlan, PlanStatus
@@ -84,6 +85,8 @@ class ConversationScreen(Screen[None]):
         super().__init__()
         self._settings = settings
         self._client = client
+        self._activity_events = ActivityPublisher()
+        self._unsubscribe_activity = self._activity_events.subscribe(self._agent_event)
         project = detect_project(settings.project_path)
         self._context_selector = (
             ContextSelector(
@@ -111,10 +114,10 @@ class ConversationScreen(Screen[None]):
                 ),
                 session_store=session_store,
                 session_id=session_id,
-                on_event=self._agent_event,
+                on_event=self._activity_events.publish,
             )
         )
-        self._conversation.replace_client(client, on_event=self._agent_event)
+        self._conversation.replace_client(client, on_event=self._activity_events.publish)
         self._session_store = session_store
         self._plan_service = PlanService()
         self._current_plan: ExecutionPlan | None = (
@@ -435,7 +438,7 @@ class ConversationScreen(Screen[None]):
         context = None
         try:
             if self._context_selector is not None:
-                self._agent_event(
+                self._activity_events.publish(
                     AgentEvent(kind="context_started", message="Selecting project context")
                 )
                 context = await asyncio.to_thread(self._context_selector.select, objective)
@@ -820,6 +823,7 @@ class ConversationScreen(Screen[None]):
         app.exit()
 
     async def on_unmount(self) -> None:
+        self._unsubscribe_activity()
         self._local_generation += 1
         self._invalidate_attachment_load()
         await self._client.close()
