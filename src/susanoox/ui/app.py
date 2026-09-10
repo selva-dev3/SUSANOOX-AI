@@ -10,6 +10,7 @@ from susanoox.config.settings import Settings
 from susanoox.models.client import SusanooxClient
 from susanoox.models.protocol import ChatClient
 from susanoox.sessions.storage import SessionStore
+from susanoox.ui.clipboard import copy_to_system_clipboard
 from susanoox.ui.screens.conversation import ConversationScreen, PendingRequest
 from susanoox.ui.screens.onboarding import OnboardingScreen
 from susanoox.utils.errors import CredentialError
@@ -67,6 +68,16 @@ class SusanooxApp(App[None]):
 
     def create_client(self, api_key: str) -> ChatClient:
         return self._client_factory(api_key, self.settings)
+
+    def copy_to_clipboard(self, text: str) -> None:
+        super().copy_to_clipboard(text)
+        self.run_worker(
+            lambda: copy_to_system_clipboard(text),
+            group="clipboard",
+            exclusive=True,
+            thread=True,
+            exit_on_error=False,
+        )
 
     def enter_conversation(self, client: ChatClient, credential_source: CredentialSource) -> None:
         pending_request = self._pending_request

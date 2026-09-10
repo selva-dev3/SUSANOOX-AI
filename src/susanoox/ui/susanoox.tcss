@@ -13,6 +13,11 @@ Screen {
     color: $text;
 }
 
+Screen > .screen--selection {
+    background: $accent-soft 70%;
+    color: $text;
+}
+
 #app-header {
     dock: top;
     width: 100%;
