@@ -56,3 +56,53 @@ def test_non_finite_timeout_is_rejected(tmp_path: Path, timeout: str) -> None:
 
     with pytest.raises(ConfigurationError, match="must be positive"):
         load_settings(project_path=tmp_path, paths=paths)
+
+
+def test_agent_intelligence_settings_are_loaded(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        """[susanoox]
+plan_mode = true
+auto_context = false
+context_max_files = 7
+context_max_chars = 12000
+summary_trigger_chars = 8000
+api_retry_attempts = 3
+retry_base_delay_seconds = 0.25
+""",
+        encoding="utf-8",
+    )
+    paths = AppPaths(config_dir, tmp_path / "data", tmp_path / "cache", tmp_path / "logs")
+
+    settings = load_settings(project_path=tmp_path, paths=paths)
+
+    assert settings.plan_mode is True
+    assert settings.auto_context is False
+    assert settings.context_max_files == 7
+    assert settings.context_max_chars == 12_000
+    assert settings.summary_trigger_chars == 8_000
+    assert settings.api_retry_attempts == 3
+    assert settings.retry_base_delay_seconds == 0.25
+
+
+def test_invalid_context_budget_is_rejected(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text("[susanoox]\ncontext_max_files = 0\n", encoding="utf-8")
+    paths = AppPaths(config_dir, tmp_path, tmp_path, tmp_path)
+
+    with pytest.raises(ConfigurationError, match="context_max_files"):
+        load_settings(project_path=tmp_path, paths=paths)
+
+
+def test_project_config_cannot_expand_context_beyond_hard_limit(tmp_path: Path) -> None:
+    project_config = tmp_path / ".susanoox"
+    project_config.mkdir()
+    (project_config / "config.toml").write_text(
+        "[susanoox]\ncontext_max_chars = 999999999\n", encoding="utf-8"
+    )
+    paths = AppPaths(tmp_path / "config", tmp_path / "data", tmp_path / "cache", tmp_path / "logs")
+
+    with pytest.raises(ConfigurationError, match="context_max_chars"):
+        load_settings(project_path=tmp_path, paths=paths)

@@ -70,8 +70,10 @@ async def test_client_validates_and_streams_with_configured_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = FakeOpenAI()
+    client_options: dict[str, object] = {}
 
-    def make_client(**_kwargs: object) -> FakeOpenAI:
+    def make_client(**kwargs: object) -> FakeOpenAI:
+        client_options.update(kwargs)
         return fake
 
     monkeypatch.setattr("susanoox.models.client.AsyncOpenAI", make_client)
@@ -97,6 +99,7 @@ async def test_client_validates_and_streams_with_configured_model(
     assert fake.completions.calls[1]["stream"] is True
     assert fake.completions.calls[1]["model"] == "susanoox-large"
     assert fake.completions.calls[1]["stream_options"] == {"include_usage": True}
+    assert client_options["max_retries"] == 0
     assert fake.completions.last_stream is not None
     assert fake.completions.last_stream.closed
     assert fake.closed

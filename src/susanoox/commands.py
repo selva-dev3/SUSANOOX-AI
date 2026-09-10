@@ -3,11 +3,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Literal
 
-CommandName = Literal["model", "usage", "help", "clear", "exit", "paste-image"]
+CommandName = Literal[
+    "model",
+    "usage",
+    "plan",
+    "approve",
+    "revise",
+    "reject",
+    "context",
+    "help",
+    "clear",
+    "exit",
+    "paste-image",
+]
 COMMANDS: Final[dict[CommandName, str]] = {
     "model": "select a chat model",
     "usage": "show token usage for this session",
     "paste-image": "attach an image from the OS clipboard",
+    "plan": "enable planning or create a plan: /plan <task>",
+    "approve": "approve and continue with the current plan",
+    "revise": "revise the current plan: /revise <feedback>",
+    "reject": "cancel the current plan",
+    "context": "show files selected for the last request",
     "clear": "clear the conversation",
     "help": "show this command list",
     "exit": "close Susanoox",

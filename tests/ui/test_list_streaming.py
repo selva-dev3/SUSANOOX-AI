@@ -42,7 +42,7 @@ async def test_slow_list_stream_keeps_app_usable(tmp_path: Path, kind: str) -> N
     )
     client = ListClient(response=tuple(content[i : i + 9] for i in range(0, len(content), 9)))
     app = SusanooxApp(
-        settings=Settings(project_path=tmp_path),
+        settings=Settings(project_path=tmp_path, auto_context=False),
         credential_store=MemoryCredentialStore(Credential("test-only", CredentialSource.KEYRING)),
         client_factory=lambda _key, _settings: client,
     )
@@ -67,7 +67,7 @@ async def test_slow_list_stream_keeps_app_usable(tmp_path: Path, kind: str) -> N
 async def test_markdown_updates_reuse_the_content_widget(tmp_path: Path) -> None:
     client = FakeChatClient()
     app = SusanooxApp(
-        settings=Settings(project_path=tmp_path),
+        settings=Settings(project_path=tmp_path, auto_context=False),
         credential_store=MemoryCredentialStore(Credential("test-only", CredentialSource.KEYRING)),
         client_factory=lambda _key, _settings: client,
     )
@@ -97,7 +97,7 @@ async def test_markdown_updates_reuse_the_content_widget(tmp_path: Path) -> None
 async def test_cancel_real_markdown_list(tmp_path: Path, shutdown: bool) -> None:
     client = ListClient(response=tuple(f"{i}. Item\n" for i in range(1, 100)))
     app = SusanooxApp(
-        settings=Settings(project_path=tmp_path),
+        settings=Settings(project_path=tmp_path, auto_context=False),
         credential_store=MemoryCredentialStore(Credential("test-only", CredentialSource.KEYRING)),
         client_factory=lambda _key, _settings: client,
     )

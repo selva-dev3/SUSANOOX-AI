@@ -73,6 +73,15 @@ Screen {
     border-left: tall $danger;
 }
 
+.message.activity {
+    color: $muted;
+    padding: 0 2 1 2;
+}
+
+.message.activity .message-label {
+    color: $muted;
+}
+
 .message-label {
     width: 100%;
     height: 1;
