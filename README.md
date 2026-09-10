@@ -171,6 +171,25 @@ $env:SUSANOOX_API_KEY="..."; susanoox
 Avoid adding that command to shell history. Susanoox deliberately refuses a plaintext credential
 file fallback.
 
+## Access the current intelligence features
+
+Run `susanoox` from the project you want Susanoox to understand. The current features are
+available as follows:
+
+| Feature | How to access it |
+| --- | --- |
+| Plan Mode | Start with `susanoox --plan`, enter `/plan` to toggle it, or use `/plan <task>` |
+| Plan decisions | Use `/approve`, `/revise <feedback>`, or `/reject` after a plan appears |
+| Automatic context | Enabled by default for text prompts; enter `/context` to inspect selected files |
+| Persistent sessions | Run `susanoox sessions`, then resume with `susanoox --resume <id>` |
+| Smart summarization | Runs automatically when conversation history reaches its configured threshold |
+| Retry recovery | Runs automatically for eligible pre-response failures; press `Esc` to cancel |
+| Token usage | Enter `/usage` for exact API-reported usage in the current session |
+
+Plan Mode, automatic context, summarization, and retry behavior can be configured globally or in
+`<project>/.susanoox/config.toml`; see [Configuration](#configuration). Automatic context and
+summarization do not require separate commands during normal conversation.
+
 ## Planning and sessions
 
 Start directly in explicit planning mode:
