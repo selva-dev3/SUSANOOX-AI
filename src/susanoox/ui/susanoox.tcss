@@ -1,11 +1,12 @@
-$background: #090c10;
-$surface: #10151b;
-$surface-raised: #151c24;
-$border: #29323d;
-$text: #e6edf3;
-$muted: #84909d;
-$accent: #d7ff4f;
-$danger: #ff657a;
+$background: #111110;
+$surface: #171715;
+$surface-raised: #1d1c1a;
+$border: #57534e;
+$text: #e8e4de;
+$muted: #918c84;
+$accent: #df7652;
+$accent-soft: #a9573e;
+$danger: #ef6a6a;
 
 Screen {
     background: $background;
@@ -15,10 +16,11 @@ Screen {
 #app-header {
     dock: top;
     width: 100%;
-    height: 3;
-    padding: 1 2 0 2;
-    background: $surface;
-    border-bottom: solid $border;
+    height: 2;
+    padding: 0 2;
+    background: $background;
+    border-bottom: solid #302e2a;
+    content-align: left middle;
 }
 
 #brand {
@@ -28,7 +30,7 @@ Screen {
 #connection-status {
     width: 1fr;
     text-align: center;
-    color: #73e6a1;
+    color: $muted;
 }
 
 #project-path {
@@ -41,12 +43,13 @@ Screen {
 #conversation-shell {
     width: 100%;
     height: 1fr;
-    padding: 1 3;
+    padding: 1 2 0 2;
 }
 
 #conversation-view {
     width: 100%;
     height: 1fr;
+    align-horizontal: center;
     scrollbar-color: $border;
     scrollbar-color-hover: $accent;
 }
@@ -55,14 +58,14 @@ Screen {
     width: 100%;
     height: auto;
     margin: 0 0 1 0;
-    padding: 1 2;
-    background: $surface;
-    border-left: tall $border;
+    padding: 0 2;
+    background: transparent;
+    border-left: none;
 }
 
 .message.user {
+    padding: 1 2;
     background: $surface-raised;
-    border-left: tall $accent;
 }
 
 .message.error {
@@ -73,7 +76,7 @@ Screen {
 .message-label {
     width: 100%;
     height: 1;
-    margin-bottom: 1;
+    margin-bottom: 0;
     color: $accent;
     text-style: bold;
 }
@@ -89,28 +92,44 @@ Screen {
 }
 
 #welcome-panel {
-    width: 80%;
-    max-width: 100;
+    width: 94%;
+    max-width: 136;
     height: auto;
-    margin: 3 0;
-    padding: 2 3;
-    background: $surface;
-    border: round $border;
+    margin: 1 0;
+    padding: 0 2 1 2;
+    background: $background;
+    border: round $accent-soft;
 }
 
 #welcome-title {
+    width: auto;
+    height: 1;
+    margin: 0 0 1 1;
+    text-style: bold;
+    color: $accent;
+}
+
+#welcome-greeting {
     width: 100%;
     text-align: center;
     text-style: bold;
-    color: $accent;
-    padding-bottom: 1;
 }
 
-#welcome-subtitle {
+#welcome-mark {
     width: 100%;
+    height: 4;
+    margin: 1 0;
     text-align: center;
+    color: $accent;
+    text-style: bold;
+}
+
+#welcome-context {
+    width: 100%;
+    height: 1;
+    text-align: center;
+    text-overflow: ellipsis;
     color: $muted;
-    padding-bottom: 2;
 }
 
 #welcome-columns {
@@ -121,18 +140,60 @@ Screen {
 .welcome-column {
     width: 1fr;
     height: auto;
-    padding: 1 2;
-    line-pad: 1;
+    padding: 0 2;
 }
 
-.welcome-column.muted {
+.welcome-identity {
+    padding-top: 1;
+    border-right: solid $border;
+}
+
+.welcome-section-title {
+    width: 100%;
+    height: 1;
+    color: $accent;
+    text-style: bold;
+}
+
+.starter-action {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    content-align: left middle;
+    background: transparent;
+    color: $text;
+    border: none;
+}
+
+.starter-action:hover,
+.starter-action:focus {
+    background: $surface-raised;
+    color: $accent;
+}
+
+#recent-activity {
     color: $muted;
-    border-left: solid $border;
+}
+
+.recent-title {
+    margin-top: 1;
+    border-top: solid #302e2a;
+}
+
+#welcome-hint {
+    width: 100%;
+    height: 2;
+    margin-top: 1;
+    padding: 1 1 0 1;
+    color: $muted;
+    border-top: solid #302e2a;
 }
 
 #activity-bar {
     width: 100%;
-    height: 2;
+    height: 1;
     padding: 0 1;
     color: $muted;
 }
@@ -154,44 +215,139 @@ Screen {
 
 #prompt-composer {
     width: 100%;
-    height: 5;
-    background: $surface-raised;
-    border: round $border;
+    height: 3;
+    background: transparent;
+    border-top: solid $border;
+    border-bottom: solid $border;
+}
+
+#command-suggestions {
+    display: none;
+    height: auto;
+    max-height: 30%;
+    min-height: 1;
+    border: none;
+    border-left: solid $accent;
+    padding: 0 1;
+    background: $surface;
+    color: $text;
 }
 
 #prompt-composer:focus-within {
-    border: round $accent;
+    border-top: solid $accent;
+    border-bottom: solid $accent;
 }
 
 #prompt-mark {
     width: 3;
     height: 100%;
-    padding: 1 0 0 1;
+    padding: 1 0 0 0;
     color: $accent;
     text-style: bold;
+}
+
+#attachment-button {
+    display: none;
+    width: auto;
+    max-width: 32%;
+    height: 1;
+    min-height: 1;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    background: $surface-raised;
+    color: $accent;
+    border: none;
+    text-overflow: ellipsis;
+}
+
+#attachment-button:hover,
+#attachment-button:focus {
+    background: $border;
+    color: $text;
 }
 
 #prompt-input {
     width: 1fr;
     height: 100%;
+    padding: 0;
     border: none;
     background: transparent;
 }
 
 #send-button {
-    width: 10;
-    min-width: 10;
-    height: 3;
-    margin: 0 1;
-    background: $accent;
-    color: $background;
+    width: 9;
+    min-width: 9;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    color: $muted;
     border: none;
+    border-left: solid #302e2a;
+}
+
+#send-button:hover,
+#send-button:focus {
+    background: $surface-raised;
+    color: $accent;
+    text-style: bold;
 }
 
 #shortcut-bar {
     width: 100%;
     height: 1;
-    text-align: center;
+    padding-left: 1;
+    text-align: left;
+    color: $muted;
+}
+
+ModelPickerScreen {
+    align: center middle;
+    background: rgba(9, 9, 8, 0.82);
+}
+
+#model-picker {
+    width: 72;
+    max-width: 94%;
+    height: auto;
+    padding: 1 2;
+    background: $surface;
+    border: round $accent-soft;
+}
+
+#model-picker-title {
+    width: 100%;
+    height: 2;
+    color: $accent;
+    text-style: bold;
+}
+
+.model-option {
+    width: 100%;
+    height: 4;
+    margin-bottom: 1;
+    padding: 0 1;
+    content-align: left middle;
+    background: $surface-raised;
+    color: $text;
+    border: none;
+}
+
+.model-option:hover,
+.model-option:focus {
+    background: $border;
+    color: $accent;
+}
+
+.model-option:disabled {
+    color: $muted;
+    opacity: 60%;
+}
+
+#model-picker-help {
+    width: 100%;
+    height: 1;
     color: $muted;
 }
 
@@ -276,8 +432,7 @@ Screen.-compact #conversation-shell {
 
 Screen.-compact #welcome-panel {
     width: 100%;
-    margin: 1 0;
-    padding: 1;
+    padding: 0 1 1 1;
 }
 
 Screen.-compact #welcome-columns {
@@ -288,8 +443,8 @@ Screen.-compact .welcome-column {
     width: 100%;
 }
 
-Screen.-compact .welcome-column.muted {
-    border-left: none;
+Screen.-compact .welcome-identity {
+    border-right: none;
     border-top: solid $border;
 }
 
@@ -300,4 +455,22 @@ Screen.-compact #shortcut-bar {
 Screen.-compact #onboarding-card {
     width: 92%;
     padding: 2;
+}
+
+Screen.-compact #model-picker {
+    width: 96%;
+    padding: 1;
+}
+
+Screen.-short #conversation-shell {
+    padding: 0 1;
+}
+
+Screen.-short #welcome-panel {
+    margin: 0;
+    padding: 0 1 1 1;
+}
+
+Screen.-short #shortcut-bar {
+    display: none;
 }

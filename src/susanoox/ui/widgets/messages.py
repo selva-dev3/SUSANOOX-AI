@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Literal
 
+from rich.markdown import Markdown
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import Markdown, Static
+from textual.widgets import Static
 
 MessageKind = Literal["user", "assistant", "error"]
 
@@ -16,9 +17,13 @@ class MessageBubble(Static):
         self.kind = kind
 
     def compose(self) -> ComposeResult:
-        labels = {"user": "YOU", "assistant": "SUSANOOX", "error": "ERROR"}
+        labels = {
+            "user": "› YOU",  # noqa: RUF001 - intentional prompt glyph
+            "assistant": "◆ SUSANOOX",
+            "error": "× ERROR",  # noqa: RUF001 - intentional error glyph
+        }
         yield Static(labels[self.kind], classes="message-label")
-        yield Markdown(self._content, classes="message-content")
+        yield Static(Markdown(self._content), classes="message-content")
 
     @property
     def markdown_text(self) -> str:
@@ -26,7 +31,8 @@ class MessageBubble(Static):
 
     async def update_content(self, content: str) -> None:
         self._content = content
-        await self.query_one(Markdown).update(content)
+        # A stable renderable avoids cancelling Textual child-widget removal during streaming.
+        self.query_one(".message-content", Static).update(Markdown(content))
 
 
 class ConversationView(VerticalScroll):
