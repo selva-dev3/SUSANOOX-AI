@@ -78,3 +78,51 @@ def test_cancelled_partial_content_is_clearly_marked() -> None:
 
     assert rendered.startswith("partial response")
     assert "cancelled and excluded from context" in rendered
+
+
+@pytest.mark.parametrize("operation", ["add", "finish"])
+async def test_active_background_render_is_drained(operation: str) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    rendered: list[str] = []
+
+    async def render(content: str) -> None:
+        if content == "ab":
+            started.set()
+            await release.wait()
+        rendered.append(content)
+
+    renderer = StreamRenderer(interval_seconds=0.001)
+    await renderer.add("a", render)
+    await renderer.add("b", render)
+    await asyncio.wait_for(started.wait(), 1)
+    if operation == "add":
+        pending = asyncio.create_task(renderer.add("c", render))
+    else:
+        pending = asyncio.create_task(renderer.finish(render))
+    await asyncio.sleep(0.01)
+    assert not pending.done()
+    release.set()
+    await pending
+    await renderer.finish(render)
+    assert rendered == (["a", "ab", "abc"] if operation == "add" else ["a", "ab"])
+
+
+async def test_close_cancels_a_stalled_background_callback() -> None:
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def render(content: str) -> None:
+        if content == "ab":
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+    renderer = StreamRenderer(interval_seconds=0.001)
+    await renderer.add("a", render)
+    await renderer.add("b", render)
+    await asyncio.wait_for(started.wait(), 1)
+    await asyncio.wait_for(renderer.close(), 1)
+    assert cancelled.is_set()

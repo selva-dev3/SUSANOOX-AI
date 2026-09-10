@@ -212,12 +212,19 @@ class ConversationScreen(Screen[None]):
             view.scroll_end(animate=False)
         except asyncio.CancelledError:
             await self._cleanup_renderer(renderer)
-            if response_committed:
-                await assistant_message.update_content(renderer.content)
-                self._set_busy(False, "Ready")
-                raise
-            await assistant_message.update_content(cancelled_content(renderer.content))
-            self._set_busy(False, "Cancelled")
+            app = cast(
+                "SusanooxApp",
+                self.app,  # pyright: ignore[reportUnknownMemberType]
+            )
+            if app.is_running and self.is_running and assistant_message.is_attached:
+                content = (
+                    renderer.content if response_committed else cancelled_content(renderer.content)
+                )
+                try:
+                    await assistant_message.update_content(content)
+                    self._set_busy(False, "Ready" if response_committed else "Cancelled")
+                except Exception:
+                    _LOGGER.warning("Unable to render cancellation status during cleanup")
             raise
         except AuthenticationError as error:
             await self._cleanup_renderer(renderer)
