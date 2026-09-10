@@ -1,8 +1,9 @@
 # Susanoox
 
 Susanoox is an independently designed, full-screen AI coding assistant for the terminal. The
-current `0.1.0` milestone provides secure API-key onboarding, model selection, multi-turn
-conversation, live Markdown streaming, cancellation, and a responsive Textual interface.
+current `0.1.0` milestone provides secure API-key onboarding, live model selection, multi-turn
+conversation, exact API-reported usage, image attachments, live Markdown streaming, cancellation,
+and a responsive Textual interface.
 
 > [!IMPORTANT]
 > Project inspection, file editing, shell execution, Git mutations, persisted sessions, and the
@@ -68,14 +69,55 @@ The default model is `susanoox-fast`. Select the larger chat model for more comp
 susanoox --model susanoox-large
 ```
 
+Inside the conversation, enter `/model` to open the model picker or use a direct command:
+
+```text
+/model susanoox-large
+```
+
 `susanoox-embed` is reserved for the future context-retrieval engine and cannot be selected as a
 chat model.
+
+## Conversation commands
+
+| Command | Action |
+| --- | --- |
+| `/model` | Show all models and select an available chat model |
+| `/usage` | Show exact token usage reported by the API for the current session |
+| `/paste-image` | Attach an image from the operating-system clipboard |
+| `/clear` | Clear in-memory conversation context |
+| `/help` | Show available commands |
+| `/exit` | Exit Susanoox |
+
+If the configured API does not provide usage metadata, `/usage` reports that it is unavailable
+instead of estimating token counts.
+If any request lacks usage metadata (including a cancelled or failed request), reported totals
+are explicitly marked partial. Clearing chat history does not reset session usage.
+
+## Image input
+
+Paste or drag an absolute PNG, JPEG, GIF, or WebP file path into the prompt to attach it.
+Relative paths must start with `./` or `../`, or be quoted (for example, `"screen shot.png"`).
+Bare filenames and ordinary prose remain text. On supported
+desktops, `/paste-image` reads an image directly from the operating-system clipboard.
+`Ctrl+Shift+V` also works when the terminal forwards it; many terminals reserve it for text paste. The
+attachment is shown before sending and can be removed with the attachment control.
+
+Images are validated before use and limited to 10 MB. Clipboard support depends on the operating
+system and installed terminal/clipboard facilities; when it is unavailable, Susanoox displays a
+file-path fallback. Image understanding also requires the selected Susanoox chat model and API
+deployment to accept OpenAI-compatible image content.
+Vision capability for Fast and Large is currently unverified; the attachment status says so.
+Known non-vision models are blocked before image requests are sent. Submission waits for image
+validation to finish; replaced or cancelled loads cannot overwrite the current attachment.
 
 ## Keyboard controls
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+Enter` | Send the prompt |
+| `Enter` | Send the prompt |
+| `Shift+Enter` | Insert a new line |
+| `Ctrl+Shift+V` | Attach an image from the OS clipboard |
 | `Esc` | Cancel the active response |
 | `Ctrl+K` | Clear in-memory conversation context |
 | `Ctrl+Q` | Exit |
@@ -100,6 +142,9 @@ cannot provide API keys or weaken application security rules.
 
 - Credentials use the OS keyring or an explicit process environment variable.
 - Logs redact common credential formats and authorization fields.
+- Image payloads are kept in memory and are never written to diagnostic logs.
+- Attachments are validated by file signature, format, size, and safe image dimensions.
+- In-memory image context is capped at 20 MB; older binary payloads are pruned before newer ones.
 - The current conversation milestone exposes no filesystem, shell, network-tool, or Git authority
   to the model.
 - Future tools will be constrained to the project and mediated by a centralized approval policy.

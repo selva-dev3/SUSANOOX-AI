@@ -23,3 +23,7 @@ class ServiceConnectionError(SusanooxError):
 
 class ServiceResponseError(SusanooxError):
     """The Susanoox service returned an unusable response."""
+
+
+class AttachmentError(SusanooxError):
+    """An image attachment could not be read or validated safely."""
