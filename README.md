@@ -13,28 +13,137 @@ and a responsive Textual interface.
 ## Requirements
 
 - Python 3.11 or newer
+- Git (required for installation from GitHub)
 - Linux, macOS, or Windows
 - A Susanoox API key
 - An operating-system keyring supported by Python `keyring`, or a process-scoped environment key
 
 ## Installation
 
-Install from GitHub with `pipx`:
+### 1. Install pipx
+
+Use Python 3.11 or newer for both pipx and Susanoox. With multiple Python installations,
+pass `--python /path/to/python3.11-or-newer` to `pipx install`.
+
+**Ubuntu 23.04+ / Debian 12+:**
 
 ```bash
-pipx install git+https://github.com/selva-dev3/SUSANOOX-AI.git
+sudo apt update
+sudo apt install pipx git python3-venv
+pipx ensurepath
 ```
 
-For local development:
+**macOS with Homebrew:**
 
 ```bash
-git clone https://github.com/selva-dev3/SUSANOOX-AI.git
+brew install python pipx git
+pipx ensurepath
+```
+
+**Windows PowerShell:** install Python 3.11+ and [Git for Windows](https://git-scm.com/downloads/win),
+then run:
+
+```powershell
+py -m pip install --user pipx
+py -m pipx ensurepath
+```
+
+Open a new terminal after `ensurepath`, then check `pipx --version` and `git --version`.
+For other systems, see the [official pipx installation guide](https://pipx.pypa.io/latest/how-to/install-pipx.html).
+If Linux reports `externally-managed-environment`, use its package manager rather than overriding
+system Python protections.
+
+### 2. Authenticate for the private repository
+
+This repository is private: your GitHub account must have access to
+[`selva-dev3/SUSANOOX-AI`](https://github.com/selva-dev3/SUSANOOX-AI). A Susanoox API key does not
+grant GitHub access. Ask the repository owner for an invitation if needed.
+
+For HTTPS installation, install [GitHub CLI](https://cli.github.com/), then authenticate:
+
+```bash
+gh auth login --hostname github.com --git-protocol https --web
+gh auth setup-git --hostname github.com
+```
+
+The second command configures Git to use GitHub CLI authentication; see
+[`gh auth setup-git`](https://cli.github.com/manual/gh_auth_setup-git).
+Use secure credential storage. If GitHub CLI warns that credentials would be saved as plain text,
+use an OS-backed Git credential manager or an existing SSH setup instead. Never place tokens in
+installation URLs, shell history, or project files.
+
+### 3. Install from main
+
+Run this in a new terminal on Linux, macOS, or Windows:
+
+```bash
+pipx install "git+https://github.com/selva-dev3/SUSANOOX-AI.git@main"
+susanoox --version
+susanoox --help
+```
+
+`@main` is intentional: an unqualified Git URL follows the repository's default branch, which
+may differ from `main`. You do not need to clone the repository for a pipx installation.
+
+If you already use an SSH key authorized for this repository, use this alternative instead:
+
+```bash
+pipx install "git+ssh://git@github.com/selva-dev3/SUSANOOX-AI.git@main"
+```
+
+### Update an existing pipx installation
+
+Close Susanoox and reinstall from `main` to pick up new commits even if the package version has
+not changed:
+
+```bash
+pipx install --force "git+https://github.com/selva-dev3/SUSANOOX-AI.git@main"
+susanoox --version
+```
+
+For SSH installations, use the SSH URL above with the same `--force` option. This refreshes the
+pipx application; it does not delete your project or OS-keyring credentials. `--version` reports
+the package version, not a Git commit, so it can remain `0.1.0` after an update.
+
+### Local development (alternative to pipx)
+
+Authenticate as above, then clone `main` explicitly:
+
+```bash
+git clone --branch main https://github.com/selva-dev3/SUSANOOX-AI.git
 cd SUSANOOX-AI
-python -m venv .venv
-# Linux/macOS: source .venv/bin/activate
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
 ```
+
+**Linux/macOS:**
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/susanoox --version
+```
+
+**Windows PowerShell:**
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\susanoox.exe --version
+```
+
+These commands do not require virtual-environment activation or changes to PowerShell execution
+policy. Use `.venv/bin/susanoox` (Windows: `.\.venv\Scripts\susanoox.exe`) to run this checkout.
+For an SSH clone, replace the HTTPS clone URL with `git@github.com:selva-dev3/SUSANOOX-AI.git`.
+
+### Installation troubleshooting
+
+- **Repository not found / authentication failed:** confirm that your GitHub account has repository
+  access and that HTTPS Git authentication or your SSH key is configured.
+- **`susanoox` not found:** run `pipx ensurepath`, reopen the terminal and check `pipx list`; for a
+  development checkout, use the explicit executable path above.
+- **Wrong or old UI:** reinstall using the explicit `@main` URL; check `command -v susanoox` on
+  Linux/macOS or `Get-Command susanoox` in PowerShell for an older executable taking precedence.
+- **Unsupported Python / missing venv:** install Python 3.11+ and its venv support, then choose
+  that interpreter with pipx's `--python` option or use it to create the development environment.
 
 ## First run
 
