@@ -20,6 +20,8 @@ from susanoox.models.protocol import (
 )
 from susanoox.utils.errors import (
     AuthenticationError,
+    ContextOverflowError,
+    RetryableServiceError,
     ServiceConnectionError,
     ServiceResponseError,
 )
@@ -37,7 +39,8 @@ class SusanooxClient:
             api_key=api_key,
             base_url=settings.base_url,
             timeout=settings.request_timeout_seconds,
-            max_retries=2,
+            # Retry ownership belongs to the conversation policy so attempts stay observable.
+            max_retries=0,
         )
 
     async def validate_api_key(self) -> None:
@@ -115,8 +118,27 @@ class SusanooxClient:
                 "Authentication expired or was rejected. Re-enter your API key."
             ) from error
         except (openai.APIConnectionError, openai.APITimeoutError) as error:
-            raise ServiceConnectionError(
+            raise RetryableServiceError(
                 "The connection to Susanoox was interrupted. You can retry the message."
+            ) from error
+        except openai.BadRequestError as error:
+            detail = str(error).casefold()
+            if "context" in detail and any(
+                marker in detail for marker in ("length", "window", "token", "maximum")
+            ):
+                raise ContextOverflowError(
+                    "The conversation exceeded the model context window. Susanoox will compact it."
+                ) from error
+            raise ServiceResponseError(
+                "Susanoox rejected the request. Check the selected model and request content."
+            ) from error
+        except openai.APIStatusError as error:
+            if error.status_code in {408, 409, 429} or error.status_code >= 500:
+                raise RetryableServiceError(
+                    "Susanoox is temporarily unavailable. The request may be retried."
+                ) from error
+            raise ServiceResponseError(
+                "Susanoox rejected the request. You can revise it and try again."
             ) from error
         except openai.APIError as error:
             raise ServiceResponseError(

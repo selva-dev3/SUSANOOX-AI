@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from math import isfinite
 from pathlib import Path
 from typing import Final, Literal, TypeAlias, cast
@@ -23,6 +23,15 @@ class Settings:
     request_timeout_seconds: float = 60.0
     project_path: Path = field(default_factory=Path.cwd)
     debug: bool = False
+    plan_mode: bool = False
+    auto_context: bool = True
+    context_max_files: int = 12
+    context_max_chars: int = 40_000
+    context_max_file_bytes: int = 1_000_000
+    summary_trigger_chars: int = 48_000
+    summary_recent_messages: int = 8
+    api_retry_attempts: int = 2
+    retry_base_delay_seconds: float = 0.5
 
 
 def _read_toml(path: Path) -> dict[str, object]:
@@ -58,6 +67,52 @@ def _apply_file(settings: Settings, path: Path) -> Settings:
         ):
             raise ConfigurationError(f"request_timeout_seconds in {path} must be positive.")
         updated = replace(updated, request_timeout_seconds=float(timeout))
+    validators: tuple[tuple[str, int, int], ...] = (
+        ("context_max_files", 1, 40),
+        ("context_max_chars", 1_000, 120_000),
+        ("context_max_file_bytes", 1_024, 5_000_000),
+        ("summary_trigger_chars", 4_000, 500_000),
+        ("summary_recent_messages", 2, 30),
+        ("api_retry_attempts", 0, 5),
+    )
+    updates: dict[str, object] = {}
+    for name, minimum, maximum in validators:
+        value = app.get(name)
+        if value is None:
+            continue
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < minimum
+            or value > maximum
+        ):
+            raise ConfigurationError(
+                f"{name} in {path} must be an integer from {minimum} to {maximum}."
+            )
+        updates[name] = value
+    for name in ("plan_mode", "auto_context"):
+        value = app.get(name)
+        if value is not None:
+            if not isinstance(value, bool):
+                raise ConfigurationError(f"{name} in {path} must be true or false.")
+            updates[name] = value
+    retry_delay = app.get("retry_base_delay_seconds")
+    if retry_delay is not None:
+        if (
+            not isinstance(retry_delay, (int, float))
+            or isinstance(retry_delay, bool)
+            or not isfinite(retry_delay)
+            or retry_delay < 0
+            or retry_delay > 30
+        ):
+            raise ConfigurationError(
+                f"retry_base_delay_seconds in {path} must be from 0 to 30 seconds."
+            )
+        updates["retry_base_delay_seconds"] = float(retry_delay)
+    if updates:
+        values = {item.name: getattr(updated, item.name) for item in fields(updated)}
+        values.update(updates)
+        updated = Settings(**values)  # pyright: ignore[reportArgumentType]
     return updated
 
 
@@ -66,6 +121,7 @@ def load_settings(
     project_path: Path,
     model_override: str | None = None,
     debug: bool = False,
+    plan_override: bool | None = None,
     paths: AppPaths | None = None,
 ) -> Settings:
     """Load global then project preferences, followed by explicit CLI overrides."""
@@ -81,4 +137,6 @@ def load_settings(
                 f"Unsupported chat model {model_override!r}. Choose: {models}."
             )
         settings = replace(settings, model=cast(ModelName, model_override))
+    if plan_override is not None:
+        settings = replace(settings, plan_mode=plan_override)
     return settings
