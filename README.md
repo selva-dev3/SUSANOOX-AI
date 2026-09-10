@@ -80,6 +80,11 @@ chat model.
 
 ## Conversation commands
 
+Type `/` at the start of the prompt to show command suggestions; keep typing to filter them.
+Use Up/Down to select, then Tab or Enter to insert the command. Press Enter again to run it.
+Escape dismisses suggestions without clearing your text. Arguments and ordinary text do not
+open the menu.
+
 | Command | Action |
 | --- | --- |
 | `/model` | Show all models and select an available chat model |

@@ -221,6 +221,18 @@ Screen {
     border-bottom: solid $border;
 }
 
+#command-suggestions {
+    display: none;
+    height: auto;
+    max-height: 30%;
+    min-height: 1;
+    border: none;
+    border-left: solid $accent;
+    padding: 0 1;
+    background: $surface;
+    color: $text;
+}
+
 #prompt-composer:focus-within {
     border-top: solid $accent;
     border-bottom: solid $accent;

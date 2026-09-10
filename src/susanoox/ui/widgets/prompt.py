@@ -3,13 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from rich.text import Text
-from textual import events
+from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Button, Static, TextArea
 
 from susanoox.models.protocol import ImageAttachment
+from susanoox.ui.widgets.command_suggestions import CommandSuggestions
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
@@ -43,6 +44,20 @@ class PromptInput(TextArea):
     def on_key(self, event: events.Key) -> None:
         if self.disabled or self.read_only:
             return
+        menu = self.screen.query_one(CommandSuggestions)
+        if menu.display and event.key in {"up", "down", "tab", "enter", "escape"}:
+            event.stop()
+            event.prevent_default()
+            if event.key in {"up", "down"}:
+                menu.move(-1 if event.key == "up" else 1)
+            else:
+                if event.key != "escape" and menu.selected_command is not None:
+                    self.load_text(f"/{menu.selected_command} ")
+                    self.move_cursor(self.document.end)
+                menu.display = False
+            return
+        if event.is_printable or event.key in {"backspace", "delete"}:
+            self.call_after_refresh(self.refresh_suggestions)
         if event.key in {"enter", "ctrl+enter"}:
             event.stop()
             event.prevent_default()
@@ -59,10 +74,19 @@ class PromptInput(TextArea):
             return
         candidate = pasted_image_path(event.text)
         if candidate is not None:
+            self.screen.query_one(CommandSuggestions).display = False
             event.stop()
             event.prevent_default()
             self.post_message(self.ImagePathPasted(candidate))
             return
+        self.call_after_refresh(self.refresh_suggestions)
+
+    def refresh_suggestions(self) -> None:
+        menu = self.screen.query_one(CommandSuggestions)
+        if self.disabled or self.read_only:
+            menu.display = False
+        else:
+            menu.suggest(self.text)
 
 
 class PromptComposer(Horizontal):
@@ -81,6 +105,12 @@ class PromptComposer(Horizontal):
         )
         yield Button("Send", id="send-button", variant="primary")
 
+    @on(TextArea.Changed)
+    def prompt_changed(self) -> None:
+        menu = self.screen.query_one(CommandSuggestions)
+        if menu.display:
+            self.query_one(PromptInput).refresh_suggestions()
+
     @property
     def text(self) -> str:
         return self.query_one(PromptInput).text
@@ -91,6 +121,7 @@ class PromptComposer(Horizontal):
 
     def clear(self) -> None:
         self.query_one(PromptInput).clear()
+        self.screen.query_one(CommandSuggestions).display = False
 
     def set_attachment(self, attachment: ImageAttachment) -> None:
         self._attachment = attachment
@@ -106,6 +137,8 @@ class PromptComposer(Horizontal):
 
     def set_enabled(self, enabled: bool) -> None:
         self.query_one(PromptInput).disabled = not enabled
+        if not enabled:
+            self.screen.query_one(CommandSuggestions).display = False
         for button in self.query(Button):
             button.disabled = not enabled
 

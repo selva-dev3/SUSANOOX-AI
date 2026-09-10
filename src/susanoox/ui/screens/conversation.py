@@ -27,6 +27,7 @@ from susanoox.models.protocol import ChatClient, ImageAttachment
 from susanoox.ui.screens.model_picker import ModelPickerScreen
 from susanoox.ui.streaming import StreamRenderer, cancelled_content
 from susanoox.ui.widgets.activity import ActivityBar
+from susanoox.ui.widgets.command_suggestions import CommandSuggestions
 from susanoox.ui.widgets.header import AppHeader
 from susanoox.ui.widgets.logo import susanoox_mark
 from susanoox.ui.widgets.messages import ConversationView, MessageKind
@@ -112,6 +113,7 @@ class ConversationScreen(Screen[None]):
                         id="welcome-hint",
                     )
             yield ActivityBar(id="activity-bar")
+            yield CommandSuggestions()
             yield PromptComposer(id="prompt-composer")
             yield Static(
                 "Enter send  ·  Shift+Enter newline  ·  Ctrl+Shift+V image  ·  Esc cancel",
