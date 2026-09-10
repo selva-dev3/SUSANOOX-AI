@@ -29,6 +29,8 @@ class StreamRenderer:
 
     async def add(self, delta: str, render: RenderCallback) -> bool:
         await self._raise_completed_flush()
+        if self._flush_rendering:
+            await self._cancel_pending_flush()
         self.content += delta
         now = self._clock()
         if not self._last_rendered_content:
