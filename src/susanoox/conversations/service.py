@@ -34,6 +34,10 @@ class ConversationService:
         self._completed_requests = 0
         self._unaccounted_requests = 0
 
+    def replace_client(self, client: ChatClient) -> None:
+        """Rebind preserved conversation state after authentication renewal."""
+        self._client = client
+
     @property
     def messages(self) -> tuple[ConversationMessage, ...]:
         return tuple(self._messages)

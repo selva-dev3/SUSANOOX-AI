@@ -4,9 +4,20 @@ from pathlib import Path
 
 import pytest
 
+from susanoox.cli import build_parser
 from susanoox.config.paths import AppPaths
 from susanoox.config.settings import load_settings
 from susanoox.utils.errors import ConfigurationError
+
+
+def test_vision_model_is_available_in_cli_and_settings(tmp_path: Path) -> None:
+    paths = AppPaths(tmp_path, tmp_path, tmp_path, tmp_path)
+    args = build_parser().parse_args(["--model", "susanoox-vision"])
+    assert args.model == "susanoox-vision"
+    assert (
+        load_settings(project_path=tmp_path, model_override="susanoox-vision", paths=paths).model
+        == "susanoox-vision"
+    )
 
 
 def test_cli_model_overrides_project_and_global_configuration(tmp_path: Path) -> None:

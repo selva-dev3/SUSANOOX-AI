@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from contextlib import aclosing
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
@@ -46,6 +47,14 @@ _STARTER_PROMPTS = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class PendingRequest:
+    prompt: str
+    attachment: ImageAttachment | None
+    model: ModelName
+    conversation: ConversationService
+
+
 class ConversationScreen(Screen[None]):
     BINDINGS: ClassVar = [
         Binding("ctrl+k", "clear", "Clear"),
@@ -60,12 +69,19 @@ class ConversationScreen(Screen[None]):
         settings: Settings,
         client: ChatClient,
         credential_source: CredentialSource,
+        pending_request: PendingRequest | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings
         self._client = client
-        self._conversation = ConversationService(client)
+        self._conversation = (
+            pending_request.conversation
+            if pending_request is not None
+            else ConversationService(client)
+        )
+        self._conversation.replace_client(client)
         self._credential_source = credential_source
+        self._pending_request = pending_request
         self._chat_worker: Worker[None] | None = None
         self._active_model: ModelName = settings.model
         self._attachment_generation = 0
@@ -116,12 +132,34 @@ class ConversationScreen(Screen[None]):
             yield CommandSuggestions()
             yield PromptComposer(id="prompt-composer")
             yield Static(
-                "Enter send  ·  Shift+Enter newline  ·  Ctrl+Shift+V image  ·  Esc cancel",
+                "Enter send  ·  Shift+Enter newline  ·  Ctrl+V image  ·  Esc cancel",
                 id="shortcut-bar",
             )
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.query_one(PromptComposer).focus_input()
+        if self._pending_request is not None:
+            pending = self._pending_request
+            self._pending_request = None
+            view = self.query_one(ConversationView)
+            for message in self._conversation.messages:
+                if message.role == "system":
+                    continue
+                content = message.content
+                if message.images:
+                    attachments = "\n".join(
+                        f"📎 `{attachment.display_name}`" for attachment in message.images
+                    )
+                    content = f"{content}\n\n{attachments}"
+                await view.add_message(content, kind=message.role)
+            if len(self._conversation.messages) > 1:
+                self.query_one("#welcome-panel").display = False
+            self._active_model = pending.model
+            if pending.attachment is not None:
+                self.query_one(PromptComposer).set_attachment(pending.attachment)
+            self._model_selected(pending.model)
+            self.query_one(PromptInput).load_text(pending.prompt)
+            self._set_busy(False, "Request restored after authentication · press Enter to retry")
 
     @on(Button.Pressed, "#send-button")
     def send_button_pressed(self) -> None:
@@ -141,6 +179,10 @@ class ConversationScreen(Screen[None]):
     @on(PromptInput.ImagePathPasted)
     def image_path_pasted(self, event: PromptInput.ImagePathPasted) -> None:
         self.load_path_attachment(event.path)
+
+    @on(PromptInput.ImageClipboardRequested)
+    def image_clipboard_requested(self) -> None:
+        self.action_paste_image()
 
     @on(Button.Pressed, ".starter-action")
     def starter_action_pressed(self, event: Button.Pressed) -> None:
@@ -163,8 +205,8 @@ class ConversationScreen(Screen[None]):
         if self._attachment_loading:
             self.query_one(ActivityBar).set_activity("Loading image…", busy=True)
             return
-        if attachment is not None and not self._image_allowed():
-            return
+        if attachment is not None and self._active_model != "susanoox-vision":
+            self._model_selected("susanoox-vision")
         try:
             command = parse_slash_command(prompt)
         except UnknownCommandError as error:
@@ -192,9 +234,14 @@ class ConversationScreen(Screen[None]):
         displayed_prompt = normalized_prompt
         if attachment is not None:
             displayed_prompt = f"{normalized_prompt}\n\n📎 `{attachment.display_name}`"
-        await view.add_message(displayed_prompt, kind="user")
+        user_message = await view.add_message(displayed_prompt, kind="user")
         assistant_message = await view.add_message("", kind="assistant")
-        self._set_busy(True, "Thinking…")
+        status = (
+            "Waiting for vision · first request may take 10-20s…"
+            if self._active_model == "susanoox-vision"
+            else "Thinking…"
+        )
+        self._set_busy(True, status)
         renderer = StreamRenderer(interval_seconds=_STREAM_RENDER_INTERVAL_SECONDS)
         response_committed = False
         try:
@@ -208,6 +255,7 @@ class ConversationScreen(Screen[None]):
                 async for delta in response_stream:
                     rendered = await renderer.add(delta, assistant_message.update_content)
                     if rendered:
+                        self.query_one(ActivityBar).set_activity("Responding…", busy=True)
                         view.scroll_end(animate=False)
             response_committed = True
             await renderer.finish(assistant_message.update_content)
@@ -234,24 +282,48 @@ class ConversationScreen(Screen[None]):
                 "SusanooxApp",
                 self.app,  # pyright: ignore[reportUnknownMemberType]
             )
-            app.require_authentication(str(error), self._credential_source)
+            app.require_authentication(
+                str(error),
+                self._credential_source,
+                pending_request=PendingRequest(
+                    prompt=prompt,
+                    attachment=attachment,
+                    model=self._active_model,
+                    conversation=self._conversation,
+                ),
+            )
             return
         except SusanooxError as error:
             await self._cleanup_renderer(renderer)
-            assistant_message.remove()
+            await assistant_message.remove()
+            await user_message.remove()
             await view.add_message(str(error), kind="error")
             self._set_busy(False, "Request failed · retry available")
+            if not response_committed:
+                self._restore_failed_input(prompt, attachment)
             return
         except Exception:
             await self._cleanup_renderer(renderer)
-            assistant_message.remove()
+            await assistant_message.remove()
+            await user_message.remove()
             await view.add_message(
                 "An unexpected response error occurred. Your API key was not exposed.", kind="error"
             )
             self._set_busy(False, "Request failed · retry available")
+            if not response_committed:
+                self._restore_failed_input(prompt, attachment)
             return
         await self._cleanup_renderer(renderer)
         self._set_busy(False, "Ready")
+
+    def _restore_failed_input(self, prompt: str, attachment: ImageAttachment | None) -> None:
+        composer = self.query_one(PromptComposer)
+        if composer.text or composer.attachment is not None or self._attachment_loading:
+            return
+        composer.query_one(PromptInput).load_text(prompt)
+        if attachment is not None:
+            composer.set_attachment(attachment)
+        self._set_busy(False, "Request failed · edit the restored draft or press Enter to retry")
 
     def action_cancel(self) -> None:
         if self._attachment_loading:
@@ -273,8 +345,6 @@ class ConversationScreen(Screen[None]):
 
     def _start_attachment_load(self, loader: Callable[[], ImageAttachment]) -> None:
         if self._chat_worker is not None and self._chat_worker.is_running:
-            return
-        if not self._image_allowed():
             return
         self._attachment_generation += 1
         self._attachment_loading = True
@@ -306,23 +376,12 @@ class ConversationScreen(Screen[None]):
         self._attachment_loading = False
         self.workers.cancel_group(self, "attachment")  # pyright: ignore[reportUnknownMemberType]
 
-    def _image_allowed(self) -> bool:
-        model = get_model(self._active_model)
-        if model is None or not model.supports_chat or model.supports_images is False:
-            self.query_one(ActivityBar).set_activity(
-                "This model does not support image input. Select another with /model.", busy=False
-            )
-            return False
-        return True
-
     def _attachment_loaded(self, attachment: ImageAttachment) -> None:
         if self._chat_worker is not None and self._chat_worker.is_running:
             return
         self.query_one(PromptComposer).set_attachment(attachment)
-        model = get_model(self._active_model)
-        status = "Image attached"
-        if model is not None and model.supports_images is None:
-            status += " · image understanding depends on deployment support (unverified)"
+        self._model_selected("susanoox-vision")
+        status = "Image attached · using susanoox-vision · Enter to send"
         self.query_one(ActivityBar).set_activity(status, busy=False)
         self.query_one(PromptComposer).focus_input()
 
@@ -371,6 +430,18 @@ class ConversationScreen(Screen[None]):
     def _model_selected(self, model: ModelName | None) -> None:
         if model is None:
             self.query_one(PromptComposer).focus_input()
+            return
+        capability = get_model(model)
+        if capability is None or not capability.supports_chat:
+            return
+        if not capability.supports_images and (
+            self.query_one(PromptComposer).attachment is not None
+            or any(message.images for message in self._conversation.messages)
+        ):
+            self._set_busy(
+                False,
+                "Image context requires vision. Remove the attachment and /clear before switching.",
+            )
             return
         self._active_model = model
         self.query_one(AppHeader).set_model(model)

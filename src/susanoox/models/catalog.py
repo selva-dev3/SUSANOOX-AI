@@ -20,13 +20,19 @@ MODELS: Final[tuple[ModelInfo, ...]] = (
         name="susanoox-fast",
         description="Quick tasks, tool calling, and frequent requests",
         supports_chat=True,
-        supports_images=None,
+        supports_images=False,
     ),
     ModelInfo(
         name="susanoox-large",
         description="Complex reasoning, coding, and hard questions",
         supports_chat=True,
-        supports_images=None,
+        supports_images=False,
+    ),
+    ModelInfo(
+        name="susanoox-vision",
+        description="Images, screenshots, diagrams and OCR · initial warm-up 10-20s",
+        supports_chat=True,
+        supports_images=True,
     ),
     ModelInfo(
         name="susanoox-embed",
