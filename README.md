@@ -190,8 +190,9 @@ available as follows:
 | Token usage | Enter `/usage` for exact API-reported usage in the current session |
 
 Plan Mode, automatic context, summarization, and retry behavior can be configured globally or in
-`<project>/.susanoox/config.toml`; see [Configuration](#configuration). Automatic context and
-summarization do not require separate commands during normal conversation.
+`<project>/.susanoox/config.toml`; see [Configuration](#configuration). Conversation summarization
+and eligible retries run automatically. Automatic context is opt-in and remains off until enabled
+with a command-line flag, runtime command, or configuration setting.
 
 The agent foundation defines validated acyclic task graphs, bounded parallel scheduling,
 task-specific sub-agent context, parent permission ceilings, background job lifecycle management,
@@ -231,11 +232,12 @@ than sending the full conversation indefinitely.
 
 ## Automatic project context
 
-For text prompts, Susanoox ranks a bounded set of relevant files using path/content matches,
-test relationships, configuration files, and current Git changes. It respects Git ignore rules,
-rejects symlinks and binary or oversized files, excludes common credential files and build/cache
-directories, and redacts likely credentials from excerpts. Selected repository content is marked
-as untrusted data in the model request. Use `/context` after a request to inspect what was selected.
+Auto Context is disabled on a fresh installation. When enabled for a text prompt, Susanoox ranks a
+bounded set of relevant files using path/content matches, test relationships, configuration files,
+and current Git changes. It respects Git ignore rules, rejects symlinks and binary or oversized
+files, excludes common credential files and build/cache directories, and redacts likely credentials
+from excerpts. Selected repository content is marked as untrusted data in the model request. Use
+`/context` after a request to inspect what was selected.
 
 Embedding-based retrieval with `susanoox-embed` is intentionally deferred until the deterministic
 local selector has established a safe and measurable baseline.
@@ -253,7 +255,8 @@ The header shows `context on` or `context off`, so the active state is always vi
 `/context` without an argument reports the current state and the files selected for the most recent
 request. Turning Auto Context off affects future text requests only: normal conversation history is
 still sent, but Susanoox does not scan or attach project file excerpts. Any cached context attached
-to a pending plan is cleared; turning the feature back on selects fresh context before execution.
+to a pending plan is cleared; turning the feature back on selects fresh context before that plan is
+approved and sent to the model.
 
 Runtime changes apply only to the current app session and never rewrite configuration files. Use a
 launch flag for a one-run override:
@@ -266,6 +269,25 @@ susanoox --no-auto-context
 The effective precedence is CLI flag, then project configuration, then global configuration, with
 Auto Context disabled by default. Set `auto_context = true` in configuration when it should remain
 enabled across launches.
+
+Examples:
+
+```bash
+# Opt in for one launch only
+susanoox --auto-context
+```
+
+```text
+# Opt in after Susanoox has started; this lasts until the app exits
+/context on
+```
+
+For persistent opt-in, add the following to either the global or project configuration:
+
+```toml
+[susanoox]
+auto_context = true
+```
 
 ## Models
 
