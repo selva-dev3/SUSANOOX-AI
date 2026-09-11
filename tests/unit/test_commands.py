@@ -22,7 +22,10 @@ def test_unknown_command_is_rejected_locally() -> None:
         parse_slash_command("/unknown")
 
 
-@pytest.mark.parametrize("name", ["plan", "approve", "revise", "reject", "context"])
+@pytest.mark.parametrize(
+    "name",
+    ["plan", "approve", "revise", "reject", "context", "tasks", "task", "agents", "cancel"],
+)
 def test_agent_intelligence_commands_are_available(name: str) -> None:
     command = parse_slash_command(f"/{name}")
 

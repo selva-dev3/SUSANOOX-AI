@@ -5,10 +5,13 @@ from typing import ClassVar
 
 from textual.app import App
 
+from susanoox.agent.orchestration.background import BackgroundTaskManager
+from susanoox.agent.orchestration.orchestrator import AgentOrchestrator
 from susanoox.config.credentials import CredentialSource, CredentialStore
 from susanoox.config.settings import Settings
 from susanoox.models.client import SusanooxClient
 from susanoox.models.protocol import ChatClient
+from susanoox.sessions.orchestration_storage import OrchestrationStore
 from susanoox.sessions.storage import SessionStore
 from susanoox.ui.clipboard import copy_to_system_clipboard
 from susanoox.ui.screens.conversation import ConversationScreen, PendingRequest
@@ -44,6 +47,7 @@ class SusanooxApp(App[None]):
         client_factory: ClientFactory = _default_client_factory,
         session_store: SessionStore | None = None,
         session_id: str | None = None,
+        orchestration_store: OrchestrationStore | None = None,
     ) -> None:
         super().__init__()
         self.settings = settings
@@ -52,6 +56,16 @@ class SusanooxApp(App[None]):
         self._pending_request: PendingRequest | None = None
         self._session_store = session_store
         self._session_id = session_id
+        self._orchestration_store = orchestration_store
+        self.orchestrator = AgentOrchestrator(
+            store=orchestration_store,
+            max_parallel_tasks=settings.agent_max_parallel_tasks,
+            max_subagents=settings.agent_max_subagents,
+        )
+        self.background_tasks = BackgroundTaskManager(
+            max_active=settings.agent_max_background_tasks,
+            store=orchestration_store,
+        )
 
     def on_mount(self) -> None:
         startup_error: str | None = None
@@ -89,6 +103,8 @@ class SusanooxApp(App[None]):
             pending_request=pending_request,
             session_store=self._session_store,
             session_id=self._session_id,
+            orchestration_store=self._orchestration_store,
+            orchestrator=self.orchestrator,
         )
         self.switch_screen(screen)  # pyright: ignore[reportUnknownMemberType]
 
@@ -112,3 +128,6 @@ class SusanooxApp(App[None]):
             )
         screen = OnboardingScreen(startup_error=message)
         self.switch_screen(screen)  # pyright: ignore[reportUnknownMemberType]
+
+    async def on_unmount(self) -> None:
+        await self.background_tasks.shutdown()

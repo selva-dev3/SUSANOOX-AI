@@ -33,11 +33,16 @@ class TaskKind(StrEnum):
 
 class TaskStatus(StrEnum):
     PENDING = "pending"
+    QUEUED = "queued"
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
+    BLOCKED = "blocked"
+    RETRYING = "retrying"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    SKIPPED = "skipped"
+    INTERRUPTED = "interrupted"
 
 
 class ActivityStatus(StrEnum):
@@ -55,8 +60,14 @@ class TaskBudget(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    max_iterations: int = Field(default=12, ge=1, le=50)
+    max_iterations: int = Field(default=20, ge=1, le=50)
+    max_tool_calls: int = Field(default=30, ge=0, le=200)
+    max_retries: int = Field(default=2, ge=0, le=10)
     max_corrections: int = Field(default=3, ge=0, le=10)
+    max_children: int = Field(default=3, ge=0, le=8)
+    max_context_chars: int = Field(default=40_000, ge=1_000, le=120_000)
+    max_output_bytes: int = Field(default=1_000_000, ge=1_024, le=10_000_000)
+    max_parallelism: int = Field(default=2, ge=1, le=8)
     timeout_seconds: float = Field(default=900.0, gt=0, le=7_200)
 
 
@@ -72,6 +83,13 @@ class AgentTask(BaseModel):
     status: TaskStatus = TaskStatus.PENDING
     budget: TaskBudget = Field(default_factory=TaskBudget)
     plan_id: str | None = None
+    run_id: str | None = Field(default=None, max_length=200)
+    parent_task_id: str | None = Field(default=None, max_length=200)
+    priority: int = Field(default=0, ge=-100, le=100)
+    assigned_agent_id: str | None = Field(default=None, max_length=200)
+    attempt_count: int = Field(default=0, ge=0, le=100)
+    result_summary: str | None = Field(default=None, max_length=4_000)
+    error_summary: str | None = Field(default=None, max_length=2_000)
     workspace_revision: str | None = Field(default=None, max_length=128)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

@@ -11,11 +11,18 @@ from textual import events
 from textual.widgets import Button, Input, Static, TextArea
 from textual.worker import WorkerCancelled
 
+from susanoox.agent.orchestration.models import (
+    AgentRun,
+    ProgressEvent,
+    RunStatus,
+    task_from_plan_step,
+)
 from susanoox.agent.planner import PlanService
 from susanoox.config.credentials import Credential, CredentialSource
 from susanoox.config.settings import ModelName, Settings
 from susanoox.context.models import ContextFile, ContextSnapshot
 from susanoox.models.protocol import ConversationMessage, ImageAttachment, StreamEvent, TextDelta
+from susanoox.sessions.orchestration_storage import OrchestrationStore
 from susanoox.sessions.storage import SessionStore
 from susanoox.ui.app import SusanooxApp
 from susanoox.ui.screens.conversation import ConversationScreen
@@ -23,6 +30,7 @@ from susanoox.ui.screens.model_picker import ModelPickerScreen
 from susanoox.ui.screens.onboarding import OnboardingScreen
 from susanoox.ui.widgets.messages import ConversationView, MessageBubble, MessageKind
 from susanoox.ui.widgets.prompt import PromptComposer, PromptInput
+from susanoox.ui.widgets.task_progress import TaskProgressPanel
 from susanoox.utils.errors import AuthenticationError
 from tests.conftest import FakeChatClient
 
@@ -140,6 +148,73 @@ async def test_plan_mode_waits_for_approval_before_model_request(tmp_path: Path)
         await [worker for worker in screen.workers if worker.group == "planning"][-1].wait()
         await [worker for worker in screen.workers if worker.group == "chat"][-1].wait()
         assert len(client.requests) == 1
+
+        unrelated = AgentRun(session_id="another-session", objective="Other work")
+        app.orchestrator.register(
+            unrelated, (task_from_plan_step(run=unrelated, title="Other task"),)
+        )
+        await app.orchestrator.events.publish(
+            ProgressEvent(
+                run_id=unrelated.id,
+                sequence=1,
+                event_type="task_started",
+                message="Other task started",
+            )
+        )
+
+
+async def test_approved_plan_remains_an_explicit_non_executable_checklist(
+    tmp_path: Path,
+) -> None:
+    session_store = SessionStore(tmp_path / "sessions.sqlite3")
+    session_store.initialize()
+    session = session_store.create(project_root=tmp_path, model="susanoox-fast")
+    orchestration_store = OrchestrationStore(session_store.path)
+    client = FakeChatClient()
+    app = SusanooxApp(
+        settings=Settings(project_path=tmp_path, auto_context=False, plan_mode=True),
+        credential_store=MemoryCredentialStore(Credential("stored-key", CredentialSource.KEYRING)),
+        client_factory=lambda _key, _settings: client,
+        session_store=session_store,
+        session_id=session.id,
+        orchestration_store=orchestration_store,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ConversationScreen)
+        prompt = screen.query_one("#prompt-input", TextArea)
+        prompt.text = "Fix authentication"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "planning"][-1].wait()
+
+        prompt.text = "/approve"
+        screen.action_submit()
+        await [worker for worker in screen.workers if worker.group == "planning"][-1].wait()
+        await [worker for worker in screen.workers if worker.group == "chat"][-1].wait()
+
+        runs = orchestration_store.list_runs(session.id)
+        assert len(runs) == 1
+        assert runs[0].status is RunStatus.PLANNED
+        assert app.orchestrator.get(runs[0].id) is not None
+        assert not app.orchestrator.cancel(runs[0].id)
+
+        rendered = str(screen.query_one(TaskProgressPanel).render())
+        other_session = session_store.create(project_root=tmp_path, model="susanoox-fast")
+        unrelated = AgentRun(session_id=other_session.id, objective="Unrelated run")
+        app.orchestrator.register(
+            unrelated, (task_from_plan_step(run=unrelated, title="Unrelated task"),)
+        )
+        await app.orchestrator.events.publish(
+            ProgressEvent(
+                run_id=unrelated.id,
+                sequence=1,
+                event_type="task_started",
+                message="Unrelated task started",
+            )
+        )
+        assert str(screen.query_one(TaskProgressPanel).render()) == rendered
 
 
 async def test_resumed_plan_refreshes_context_from_its_objective(tmp_path: Path) -> None:
