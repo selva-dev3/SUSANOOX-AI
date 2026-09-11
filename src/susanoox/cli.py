@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--auto-context",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Enable or disable automatic project context for this run.",
+        help="Enable or disable automatic project context for this run (disabled by default).",
     )
     parser.add_argument("--debug", action="store_true", help="Enable redacted debug logs.")
     subparsers = parser.add_subparsers(dest="command")

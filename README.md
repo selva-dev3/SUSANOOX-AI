@@ -181,7 +181,7 @@ available as follows:
 | --- | --- |
 | Plan Mode | Start with `susanoox --plan`, enter `/plan` to toggle it, or use `/plan <task>` |
 | Plan decisions | Use `/approve`, `/revise <feedback>`, or `/reject` after a plan appears |
-| Automatic context | Enabled by default; use `/context on`, `/context off`, or `/context toggle` |
+| Automatic context | Disabled by default; use `/context on`, `/context off`, or `/context toggle` |
 | Persistent sessions | Run `susanoox sessions`, then resume with `susanoox --resume <id>` |
 | Smart summarization | Runs automatically when conversation history reaches its configured threshold |
 | Retry recovery | Runs automatically for eligible pre-response failures; press `Esc` to cancel |
@@ -264,8 +264,8 @@ susanoox --no-auto-context
 ```
 
 The effective precedence is CLI flag, then project configuration, then global configuration, with
-Auto Context enabled by default. Set `auto_context = false` in configuration when it should remain
-disabled across launches.
+Auto Context disabled by default. Set `auto_context = true` in configuration when it should remain
+enabled across launches.
 
 ## Models
 
@@ -367,7 +367,7 @@ and `<project>/.susanoox/config.toml`:
 model = "susanoox-fast"
 request_timeout_seconds = 60
 plan_mode = false
-auto_context = true
+auto_context = false
 context_max_files = 12
 context_max_chars = 40000
 context_max_file_bytes = 1000000

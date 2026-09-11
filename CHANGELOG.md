@@ -4,6 +4,8 @@ All notable changes to Susanoox will be documented here.
 
 ## Unreleased
 
+- Make automatic project context opt-in by default while preserving explicit runtime, CLI, global,
+  and project-level enablement.
 - Initial package, Textual interface, secure onboarding, and streaming conversation implementation.
 - Add explicit plan mode with approval, revision, cancellation, and persisted plan state.
 - Add bounded, explainable automatic project-context selection with ignore and secret protections.
