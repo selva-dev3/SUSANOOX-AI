@@ -16,7 +16,7 @@ from susanoox.sessions.schema import SessionRecord, StoredMessage
 from susanoox.summarization.models import ConversationSummary
 from susanoox.utils.errors import SessionError
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 class SessionStore:
@@ -78,6 +78,85 @@ class SessionStore:
                         payload TEXT NOT NULL,
                         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
                     );
+                    CREATE TABLE IF NOT EXISTS agent_runs (
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX IF NOT EXISTS agent_runs_session_status
+                        ON agent_runs(session_id, status);
+                    CREATE TABLE IF NOT EXISTS agent_tasks (
+                        id TEXT PRIMARY KEY,
+                        run_id TEXT NOT NULL,
+                        parent_task_id TEXT,
+                        status TEXT NOT NULL,
+                        priority INTEGER NOT NULL,
+                        payload TEXT NOT NULL,
+                        FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX IF NOT EXISTS agent_tasks_run_status_priority
+                        ON agent_tasks(run_id, status, priority DESC);
+                    CREATE TABLE IF NOT EXISTS agent_dependencies (
+                        run_id TEXT NOT NULL,
+                        predecessor_id TEXT NOT NULL,
+                        successor_id TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        PRIMARY KEY (run_id, predecessor_id, successor_id),
+                        FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
+                        FOREIGN KEY (predecessor_id) REFERENCES agent_tasks(id) ON DELETE CASCADE,
+                        FOREIGN KEY (successor_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX IF NOT EXISTS agent_dependencies_successor
+                        ON agent_dependencies(run_id, successor_id);
+                    CREATE TABLE IF NOT EXISTS agent_task_attempts (
+                        id TEXT PRIMARY KEY,
+                        task_id TEXT NOT NULL,
+                        ordinal INTEGER NOT NULL,
+                        payload TEXT NOT NULL,
+                        UNIQUE(task_id, ordinal),
+                        FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
+                    );
+                    CREATE TABLE IF NOT EXISTS agent_events (
+                        run_id TEXT NOT NULL,
+                        sequence INTEGER NOT NULL,
+                        payload TEXT NOT NULL,
+                        PRIMARY KEY (run_id, sequence),
+                        FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+                    );
+                    CREATE TABLE IF NOT EXISTS agent_subagents (
+                        id TEXT PRIMARY KEY,
+                        run_id TEXT NOT NULL,
+                        task_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
+                        FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
+                    );
+                    CREATE TABLE IF NOT EXISTS agent_background_tasks (
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT,
+                        run_id TEXT,
+                        task_id TEXT,
+                        status TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                        FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE SET NULL,
+                        FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE SET NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS agent_background_status
+                        ON agent_background_tasks(status);
+                    CREATE INDEX IF NOT EXISTS agent_background_session
+                        ON agent_background_tasks(session_id, status);
+                    CREATE TABLE IF NOT EXISTS agent_recovery_events (
+                        id TEXT PRIMARY KEY,
+                        run_id TEXT NOT NULL,
+                        task_id TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
+                        FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
+                    );
                     """
                 )
                 version = connection.execute(
@@ -90,6 +169,11 @@ class SessionStore:
                     )
                 elif int(version[0]) > _SCHEMA_VERSION:
                     raise SessionError("Session data was created by a newer Susanoox version.")
+                elif int(version[0]) < _SCHEMA_VERSION:
+                    connection.execute(
+                        "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
+                        (str(_SCHEMA_VERSION),),
+                    )
             if os.name != "nt":
                 self.path.parent.chmod(0o700)
                 self.path.chmod(0o600)

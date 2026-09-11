@@ -81,6 +81,10 @@ context_max_chars = 12000
 summary_trigger_chars = 8000
 api_retry_attempts = 3
 retry_base_delay_seconds = 0.25
+agent_max_parallel_tasks = 3
+agent_max_subagents = 2
+agent_max_background_tasks = 2
+agent_max_retries = 3
 """,
         encoding="utf-8",
     )
@@ -95,6 +99,10 @@ retry_base_delay_seconds = 0.25
     assert settings.summary_trigger_chars == 8_000
     assert settings.api_retry_attempts == 3
     assert settings.retry_base_delay_seconds == 0.25
+    assert settings.agent_max_parallel_tasks == 3
+    assert settings.agent_max_subagents == 2
+    assert settings.agent_max_background_tasks == 2
+    assert settings.agent_max_retries == 3
 
 
 def test_invalid_context_budget_is_rejected(tmp_path: Path) -> None:

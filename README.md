@@ -4,8 +4,8 @@ Susanoox is an independently designed, full-screen AI coding assistant for the t
 current `0.1.0` milestone provides secure API-key onboarding, live model selection, persistent
 multi-turn sessions, explicit planning, bounded automatic project context, rolling conversation
 compaction, observable retries, exact API-reported usage, image attachments, live Markdown
-streaming, cooperative cancellation, structured activity events, and a responsive Textual
-interface.
+streaming, cooperative cancellation, durable task checklists, bounded orchestration primitives,
+structured activity events, and a responsive Textual interface.
 
 > [!IMPORTANT]
 > Automatic context selection is read-only. File editing, shell execution, Git mutations, and the
@@ -186,16 +186,20 @@ available as follows:
 | Smart summarization | Runs automatically when conversation history reaches its configured threshold |
 | Retry recovery | Runs automatically for eligible pre-response failures; press `Esc` to cancel |
 | Live activity | Context selection, summarization, retries, completion, failure, and cancellation use a shared bounded activity lifecycle |
+| Task checklists | Plans create durable, explicitly non-executable checklists; use `/tasks`, `/task <id>`, and `/agents` to inspect public state |
 | Token usage | Enter `/usage` for exact API-reported usage in the current session |
 
 Plan Mode, automatic context, summarization, and retry behavior can be configured globally or in
 `<project>/.susanoox/config.toml`; see [Configuration](#configuration). Automatic context and
 summarization do not require separate commands during normal conversation.
 
-The current agent foundation defines bounded task lifecycles, execution budgets, cooperative
-cancellation, and safe activity events for upcoming code-intelligence workflows. These internal
-contracts do not yet enable file writes, shell commands, test execution, or autonomous code
-changes; those capabilities will remain behind explicit tool registration and permission checks.
+The agent foundation defines validated acyclic task graphs, bounded parallel scheduling,
+task-specific sub-agent context, parent permission ceilings, background job lifecycle management,
+bounded retry/no-progress detection, crash interruption, explicit resume preparation, and safe
+progress events. Approved UI plans are persisted with a `planned` status, not queued as executable
+work. These contracts do not yet enable
+file writes, shell commands, test execution, or autonomous code changes; those capabilities remain
+unavailable until concrete tools are registered behind permission checks.
 
 ## Planning and sessions
 
@@ -301,6 +305,10 @@ open the menu.
 | `/revise <feedback>` | Create a revised plan version |
 | `/reject` | Cancel the current plan without continuing |
 | `/context [on|off|toggle]` | Inspect selected files or change Auto Context for future requests |
+| `/tasks` | List durable task checklists for the current session |
+| `/task <id>` | Show checklist state and individual task statuses |
+| `/agents` | Show bounded sub-agent state for the current task |
+| `/cancel <id>` | Cancel a pending/planned checklist or request cancellation of an active run |
 | `/clear` | Clear active conversation context and its persisted summary |
 | `/help` | Show available commands |
 | `/exit` | Exit Susanoox |
@@ -367,6 +375,10 @@ summary_trigger_chars = 48000
 summary_recent_messages = 8
 api_retry_attempts = 2
 retry_base_delay_seconds = 0.5
+agent_max_parallel_tasks = 2
+agent_max_subagents = 2
+agent_max_background_tasks = 2
+agent_max_retries = 2
 ```
 
 Set `api_retry_attempts = 0` to disable every automatic API retry, including overflow recovery
@@ -388,6 +400,13 @@ cannot provide API keys or weaken application security rules.
   permission denial, and ordinary bad requests are not retried.
 - The current milestone exposes no file-write, shell, network-tool, or Git mutation authority to
   the model.
+- Sub-agents receive explicit task context and can never exceed their parent permission ceiling.
+  Worker tool requests must pass through a capability facade that checks the declared tool,
+  permission ceiling, and centralized authorization before execution. No concrete project tools are
+  registered yet.
+- Parallel work is serialized when resource claims conflict. Operational model routing uses
+  `susanoox-fast` for light work and leases the single shared `susanoox-large` slot only for complex
+  code/review workers.
 - Future tools will be constrained to the project and mediated by a centralized approval policy.
 
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).

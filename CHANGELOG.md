@@ -10,3 +10,7 @@ All notable changes to Susanoox will be documented here.
 - Add versioned SQLite sessions and rolling structured conversation summaries.
 - Add bounded, observable retry handling for transient, context-overflow, and empty-output failures.
 - Preserve reduced project context during overflow recovery and strictly bound compacted context.
+- Add durable task checklists, validated task DAGs, bounded sub-agents, resource-aware parallel
+  scheduling, background task lifecycle management, crash interruption, and bounded recovery.
+- Keep approved UI plans explicitly non-executable, enforce worker tool access through centralized
+  capabilities, route worker models under bounded leases, and harden cancellation and recovery.

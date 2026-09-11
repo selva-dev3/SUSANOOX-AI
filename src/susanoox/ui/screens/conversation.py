@@ -19,9 +19,22 @@ from textual.worker import Worker
 
 from susanoox import __version__
 from susanoox.agent.activity import ActivityPublisher
+from susanoox.agent.orchestration.graph import TaskGraph
+from susanoox.agent.orchestration.models import AgentRun, ProgressEvent, RunStatus
+from susanoox.agent.orchestration.orchestrator import AgentOrchestrator
+from susanoox.agent.orchestration.plans import checklist_from_plan
+from susanoox.agent.orchestration.state import validate_run_transition, validate_task_transition
 from susanoox.agent.planner import PlanService
 from susanoox.agent.retry import RetryPolicy
-from susanoox.agent.types import AgentEvent, ExecutionPlan, PlanStatus
+from susanoox.agent.types import (
+    AgentEvent,
+    AgentTask,
+    ExecutionPlan,
+    PlanStatus,
+    TaskBudget,
+    TaskStatus,
+    utc_now,
+)
 from susanoox.commands import SlashCommand, UnknownCommandError, help_text, parse_slash_command
 from susanoox.config.credentials import CredentialSource
 from susanoox.config.settings import ModelName, Settings
@@ -32,6 +45,7 @@ from susanoox.models.attachments import load_image_file, read_clipboard_image
 from susanoox.models.catalog import get_model
 from susanoox.models.protocol import ChatClient, ImageAttachment
 from susanoox.project.detector import detect_project
+from susanoox.sessions.orchestration_storage import OrchestrationStore
 from susanoox.sessions.storage import SessionStore
 from susanoox.summarization.service import ConversationSummarizer
 from susanoox.ui.screens.model_picker import ModelPickerScreen
@@ -42,6 +56,7 @@ from susanoox.ui.widgets.header import AppHeader
 from susanoox.ui.widgets.logo import susanoox_mark
 from susanoox.ui.widgets.messages import ConversationView, MessageKind
 from susanoox.ui.widgets.prompt import PromptComposer, PromptInput
+from susanoox.ui.widgets.task_progress import TaskProgressPanel
 from susanoox.utils.errors import AttachmentError, AuthenticationError, SessionError, SusanooxError
 
 if TYPE_CHECKING:
@@ -82,6 +97,8 @@ class ConversationScreen(Screen[None]):
         pending_request: PendingRequest | None = None,
         session_store: SessionStore | None = None,
         session_id: str | None = None,
+        orchestration_store: OrchestrationStore | None = None,
+        orchestrator: AgentOrchestrator | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings
@@ -120,10 +137,18 @@ class ConversationScreen(Screen[None]):
         )
         self._conversation.replace_client(client, on_event=self._activity_events.publish)
         self._session_store = session_store
+        self._orchestration_store = orchestration_store
+        self._orchestrator = orchestrator
+        self._unsubscribe_orchestration = (
+            orchestrator.events.subscribe(self._orchestration_event)
+            if orchestrator is not None
+            else lambda: None
+        )
         self._plan_service = PlanService()
         self._current_plan: ExecutionPlan | None = (
             session_store.latest_plan(self._conversation.session_id) if session_store else None
         )
+        self._task_run: tuple[AgentRun, TaskGraph] | None = self._load_plan_run()
         self._plan_context: ContextSnapshot | None = (
             session_store.load_context_metadata(self._current_plan.context_snapshot_id)
             if self._auto_context_enabled
@@ -184,6 +209,8 @@ class ConversationScreen(Screen[None]):
                         id="welcome-hint",
                     )
             yield ActivityBar(id="activity-bar")
+            if self._orchestration_store is not None:
+                yield TaskProgressPanel(id="task-progress")
             yield CommandSuggestions()
             yield PromptComposer(id="prompt-composer")
             yield Static(
@@ -222,6 +249,8 @@ class ConversationScreen(Screen[None]):
             self._restore_messages()
         if self._plan_mode:
             self.query_one(ActivityBar).set_activity("Plan mode · describe a task", busy=False)
+        if self._task_run is not None:
+            self.query_one(TaskProgressPanel).show_graph(*self._task_run)
 
     @work(group="session-restore")
     async def _restore_messages(self) -> None:
@@ -462,6 +491,7 @@ class ConversationScreen(Screen[None]):
                         context,
                     )
                 await asyncio.to_thread(self._session_store.save_plan, self._current_plan)
+            self._replace_plan_run(self._current_plan)
             self.show_local_message(self._plan_service.render(self._current_plan))
             self._set_busy(False, "Plan ready · awaiting approval")
         except SusanooxError as error:
@@ -485,6 +515,13 @@ class ConversationScreen(Screen[None]):
             self._plan_worker.cancel()
             if self.is_mounted:
                 self._set_busy(False, "Planning cancelled")
+        if (
+            self._task_run is not None
+            and self._task_run[0].status is RunStatus.RUNNING
+            and self._orchestrator is not None
+        ):
+            self._orchestrator.cancel(self._task_run[0].id)
+            self._set_busy(False, "Cancelling task…")
 
     def action_paste_image(self) -> None:
         if self._chat_worker is not None and self._chat_worker.is_running:
@@ -602,6 +639,14 @@ class ConversationScreen(Screen[None]):
                         "Usage: `/context [on|off|toggle]`",
                         kind="error",
                     )
+        elif command.name == "tasks":
+            self.show_local_message(self._tasks_text())
+        elif command.name == "task":
+            self.show_local_message(self._task_text(command.argument))
+        elif command.name == "agents":
+            self.show_local_message(self._agents_text())
+        elif command.name == "cancel":
+            self.show_local_message(self._cancel_task_text(command.argument))
         elif command.name == "help":
             self.show_local_message(help_text())
         elif command.name == "clear":
@@ -630,11 +675,13 @@ class ConversationScreen(Screen[None]):
             self._set_busy(False, "Plan approval failed")
             return
         self._persist_plan(self._current_plan)
+        self._sync_plan_run(RunStatus.PLANNED)
         objective = self._current_plan.objective
         steps = "\n".join(f"{step.ordinal}. {step.title}" for step in self._current_plan.steps)
         self._plan_mode = False
         self.show_local_message(
-            "Plan approved. Sending the task and visible plan to the conversation model."
+            "Plan approved and saved as a planned checklist. Sending the task and visible plan "
+            "to the conversation model; no project operations will run."
         )
         self._chat_worker = self.stream_response(
             f"Use this approved visible plan to guide your response to the task. "
@@ -674,6 +721,7 @@ class ConversationScreen(Screen[None]):
             self._set_busy(False, "Plan revision failed")
             return
         self._persist_plan(self._current_plan)
+        self._replace_plan_run(self._current_plan)
         self.show_local_message(self._plan_service.render(self._current_plan))
         self._set_busy(False, "Revised plan ready · awaiting approval")
 
@@ -706,6 +754,7 @@ class ConversationScreen(Screen[None]):
             self.show_local_message(str(error), kind="error")
             return
         self._persist_plan(self._current_plan)
+        self._sync_plan_run(RunStatus.CANCELLED, cancel_tasks=True)
         self._plan_mode = False
         self.show_local_message("Plan cancelled. No execution was started.")
         self._set_busy(False, "Ready")
@@ -773,6 +822,201 @@ class ConversationScreen(Screen[None]):
             self.show_local_message(
                 "The plan state changed, but this session could not be saved.", kind="error"
             )
+
+    def _load_plan_run(self) -> tuple[AgentRun, TaskGraph] | None:
+        if self._orchestration_store is None or self._current_plan is None:
+            return None
+        try:
+            runs = self._orchestration_store.list_runs(self._conversation.session_id)
+            match = next((run for run in runs if run.plan_id == self._current_plan.id), None)
+            if match is None:
+                return None
+            loaded = self._orchestration_store.load_run(match.id)
+            if loaded is not None and self._orchestrator is not None:
+                self._orchestrator.adopt(*loaded)
+            return loaded
+        except SessionError:
+            _LOGGER.warning("Task checklist could not be restored")
+            return None
+
+    def _replace_plan_run(self, plan: ExecutionPlan) -> None:
+        if self._orchestration_store is None:
+            return
+        if self._task_run is not None and self._task_run[0].status in {
+            RunStatus.PENDING,
+            RunStatus.PLANNED,
+            RunStatus.WAITING_APPROVAL,
+        }:
+            self._sync_plan_run(RunStatus.CANCELLED, cancel_tasks=True)
+        try:
+            run, graph = checklist_from_plan(
+                plan,
+                budget=TaskBudget(
+                    max_retries=self._settings.agent_max_retries,
+                    max_parallelism=self._settings.agent_max_parallel_tasks,
+                ),
+            )
+            if self._orchestrator is not None:
+                self._orchestrator.register(run, graph.tasks.values(), graph.dependencies)
+            else:
+                self._orchestration_store.save_graph(run, graph)
+        except (SessionError, ValueError):
+            _LOGGER.warning("Task checklist could not be persisted")
+            return
+        self._task_run = (run, graph)
+        if self.is_mounted:
+            self.query_one(TaskProgressPanel).show_graph(run, graph)
+
+    def _sync_plan_run(self, status: RunStatus, *, cancel_tasks: bool = False) -> None:
+        if self._orchestration_store is None or self._task_run is None:
+            return
+        run, graph = self._task_run
+        try:
+            task_updates: list[AgentTask] = []
+            if cancel_tasks:
+                for task in tuple(graph.tasks.values()):
+                    if task.status is TaskStatus.PENDING:
+                        validate_task_transition(task.status, TaskStatus.CANCELLED)
+                        updated_task = task.model_copy(
+                            update={"status": TaskStatus.CANCELLED, "updated_at": utc_now()}
+                        )
+                        task_updates.append(updated_task)
+            validate_run_transition(run.status, status)
+            updated = run.model_copy(update={"status": status, "updated_at": utc_now()})
+            self._orchestration_store.save_run_state(updated, tuple(task_updates))
+        except SusanooxError:
+            _LOGGER.warning("Task checklist state could not be persisted")
+            return
+        for task in task_updates:
+            graph.replace(task)
+        self._task_run = (updated, graph)
+        if self._orchestrator is not None:
+            self._orchestrator.adopt(updated, graph)
+        if self.is_mounted:
+            self.query_one(TaskProgressPanel).show_graph(updated, graph)
+
+    def _tasks_text(self) -> str:
+        if self._orchestration_store is None:
+            return "**Tasks**\n\nTask persistence is unavailable for this session."
+        try:
+            runs = self._orchestration_store.list_runs(self._conversation.session_id)
+            if not runs:
+                return "**Tasks**\n\nNo task checklists in this session. Use `/plan <task>`."
+            lines = ["**Tasks**", ""]
+            for run in runs:
+                loaded = self._orchestration_store.load_run(run.id)
+                completed = loaded[1].progress().succeeded if loaded is not None else 0
+                total = loaded[1].progress().total if loaded is not None else 0
+                lines.append(
+                    f"- `{run.id[:8]}` · {run.status} · {completed}/{total} · {run.objective}"
+                )
+            background = self._orchestration_store.list_background_tasks(
+                session_id=self._conversation.session_id
+            )
+            if background:
+                lines.extend(("", "**Background**"))
+                lines.extend(
+                    f"- `{task.id[:8]}` · {task.status} · {task.title}" for task in background
+                )
+        except SessionError:
+            return "**Tasks**\n\nTask state could not be read."
+        lines.append("\nUse `/task <id>` for details.")
+        return "\n".join(lines)
+
+    def _task_text(self, task_id: str | None) -> str:
+        if task_id is None:
+            return "Usage: `/task <id>`"
+        if self._orchestration_store is None:
+            return "Task persistence is unavailable for this session."
+        try:
+            matches = [
+                run
+                for run in self._orchestration_store.list_runs(self._conversation.session_id)
+                if run.id.startswith(task_id)
+            ]
+            loaded = (
+                self._orchestration_store.load_run(matches[0].id) if len(matches) == 1 else None
+            )
+        except SessionError:
+            return "Task state could not be read."
+        if loaded is None:
+            return "Task ID was not found or is ambiguous."
+        run, graph = loaded
+        lines = [f"**◆ TASK · {run.objective}**", "", f"Status: `{run.status}`", ""]
+        lines.extend(f"- `{task.status}` · {task.objective}" for task in graph.tasks.values())
+        return "\n".join(lines)
+
+    def _agents_text(self) -> str:
+        if self._orchestration_store is None or self._task_run is None:
+            return "**Agents**\n\nNo sub-agents have run in this session."
+        try:
+            agents = self._orchestration_store.list_subagents(self._task_run[0].id)
+        except SessionError:
+            return "**Agents**\n\nSub-agent state could not be read."
+        if not agents:
+            return "**Agents**\n\nNo sub-agents have run for the current task."
+        return "**Agents**\n\n" + "\n".join(
+            f"- `{agent.config.role}` · {agent.status} · task `{agent.parent_task_id[:8]}`"
+            for agent in agents
+        )
+
+    def _cancel_task_text(self, run_id: str | None) -> str:
+        if run_id is None:
+            return "Usage: `/cancel <id>`"
+        if self._orchestration_store is None:
+            return "Task persistence is unavailable for this session."
+        try:
+            matches = [
+                run
+                for run in self._orchestration_store.list_runs(self._conversation.session_id)
+                if run.id.startswith(run_id)
+            ]
+            loaded = (
+                self._orchestration_store.load_run(matches[0].id) if len(matches) == 1 else None
+            )
+            if loaded is None:
+                return "Task ID was not found or is ambiguous."
+            run, graph = loaded
+            if run.status is RunStatus.RUNNING and self._orchestrator is not None:
+                if self._orchestrator.cancel(run.id):
+                    return f"Cancellation requested for task `{run.id[:8]}`."
+                return f"Task `{run.id[:8]}` is no longer running in this process."
+            if run.status not in {
+                RunStatus.PENDING,
+                RunStatus.PLANNED,
+                RunStatus.WAITING_APPROVAL,
+            }:
+                return f"Task `{run.id[:8]}` cannot be cancelled while it is {run.status}."
+            task_updates: list[AgentTask] = []
+            for task in tuple(graph.tasks.values()):
+                if task.status is TaskStatus.PENDING:
+                    validate_task_transition(task.status, TaskStatus.CANCELLED)
+                    cancelled = task.model_copy(
+                        update={"status": TaskStatus.CANCELLED, "updated_at": utc_now()}
+                    )
+                    task_updates.append(cancelled)
+            validate_run_transition(run.status, RunStatus.CANCELLED)
+            cancelled_run = run.model_copy(
+                update={"status": RunStatus.CANCELLED, "updated_at": utc_now()}
+            )
+            self._orchestration_store.save_run_state(cancelled_run, tuple(task_updates))
+        except SusanooxError:
+            return "Task state could not be updated."
+        if (
+            self._current_plan is not None
+            and run.plan_id == self._current_plan.id
+            and self._current_plan.status is PlanStatus.AWAITING_APPROVAL
+        ):
+            self._current_plan = self._plan_service.reject(self._current_plan)
+            self._persist_plan(self._current_plan)
+        for task in task_updates:
+            graph.replace(task)
+        if self._task_run is not None and self._task_run[0].id == cancelled_run.id:
+            self._task_run = (cancelled_run, graph)
+            if self._orchestrator is not None:
+                self._orchestrator.adopt(cancelled_run, graph)
+            self.query_one(TaskProgressPanel).show_graph(cancelled_run, graph)
+        return f"Task `{cancelled_run.id[:8]}` cancelled. No project operations were started."
 
     def _model_selected(self, model: ModelName | None) -> None:
         if model is None:
@@ -868,9 +1112,23 @@ class ConversationScreen(Screen[None]):
 
     async def on_unmount(self) -> None:
         self._unsubscribe_activity()
+        self._unsubscribe_orchestration()
         self._local_generation += 1
         self._invalidate_attachment_load()
         await self._client.close()
+
+    def _orchestration_event(self, event: ProgressEvent) -> None:
+        if not self.is_mounted or self._orchestrator is None:
+            return
+        loaded = self._orchestrator.get(event.run_id)
+        panel = next(iter(self.query(TaskProgressPanel)), None)
+        if (
+            loaded is not None
+            and loaded[0].session_id == self._conversation.session_id
+            and panel is not None
+        ):
+            self._task_run = loaded
+            panel.show_graph(*loaded)
 
     async def _cleanup_renderer(self, renderer: StreamRenderer) -> None:
         if await renderer.close() is not None:

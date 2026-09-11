@@ -227,6 +227,16 @@ Screen > .screen--selection {
     width: 1fr;
 }
 
+#task-progress {
+    display: none;
+    width: 100%;
+    height: auto;
+    padding: 1 2;
+    color: $muted;
+    border-left: solid $accent;
+    background: $surface;
+}
+
 #prompt-composer {
     width: 100%;
     height: 3;

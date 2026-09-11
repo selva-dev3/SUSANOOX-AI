@@ -34,6 +34,10 @@ class Settings:
     summary_recent_messages: int = 8
     api_retry_attempts: int = 2
     retry_base_delay_seconds: float = 0.5
+    agent_max_parallel_tasks: int = 2
+    agent_max_subagents: int = 2
+    agent_max_background_tasks: int = 2
+    agent_max_retries: int = 2
 
 
 def _read_toml(path: Path) -> dict[str, object]:
@@ -76,6 +80,10 @@ def _apply_file(settings: Settings, path: Path) -> Settings:
         ("summary_trigger_chars", 4_000, 500_000),
         ("summary_recent_messages", 2, 30),
         ("api_retry_attempts", 0, 5),
+        ("agent_max_parallel_tasks", 1, 8),
+        ("agent_max_subagents", 1, 4),
+        ("agent_max_background_tasks", 1, 4),
+        ("agent_max_retries", 0, 5),
     )
     updates: dict[str, object] = {}
     for name, minimum, maximum in validators:

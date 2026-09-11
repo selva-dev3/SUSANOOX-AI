@@ -5,6 +5,7 @@ from dataclasses import replace
 from susanoox.config.credentials import SecureCredentialStore
 from susanoox.config.paths import AppPaths
 from susanoox.config.settings import Settings
+from susanoox.sessions.orchestration_storage import OrchestrationStore
 from susanoox.sessions.storage import SessionStore
 from susanoox.ui.app import SusanooxApp
 from susanoox.utils.errors import SessionError
@@ -19,6 +20,8 @@ def run_application(
     paths = AppPaths.discover()
     session_store = SessionStore(paths.data_dir / "sessions.sqlite3")
     session_store.initialize()
+    orchestration_store = OrchestrationStore(session_store.path)
+    orchestration_store.interrupt_active()
     if resume_session_id is None:
         session = session_store.create(project_root=settings.project_path, model=settings.model)
     else:
@@ -39,5 +42,6 @@ def run_application(
         credential_store=SecureCredentialStore(),
         session_store=session_store,
         session_id=session.id,
+        orchestration_store=orchestration_store,
     )
     app.run()
