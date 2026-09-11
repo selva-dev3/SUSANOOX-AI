@@ -10,6 +10,19 @@ from susanoox.config.settings import load_settings
 from susanoox.utils.errors import ConfigurationError
 
 
+def test_auto_context_is_disabled_without_an_explicit_setting(tmp_path: Path) -> None:
+    paths = AppPaths(
+        tmp_path / "config",
+        tmp_path / "data",
+        tmp_path / "cache",
+        tmp_path / "logs",
+    )
+
+    settings = load_settings(project_path=tmp_path, paths=paths)
+
+    assert settings.auto_context is False
+
+
 def test_vision_model_is_available_in_cli_and_settings(tmp_path: Path) -> None:
     paths = AppPaths(tmp_path, tmp_path, tmp_path, tmp_path)
     args = build_parser().parse_args(["--model", "susanoox-vision"])

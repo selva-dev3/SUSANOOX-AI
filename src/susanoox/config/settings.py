@@ -26,7 +26,7 @@ class Settings:
     project_path: Path = field(default_factory=Path.cwd)
     debug: bool = False
     plan_mode: bool = False
-    auto_context: bool = True
+    auto_context: bool = False
     context_max_files: int = 12
     context_max_chars: int = 40_000
     context_max_file_bytes: int = 1_000_000
